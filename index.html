@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LetsGo Viewer</title>
+	<style>
+		* {
+			padding: 0;
+			margin: 0;
+		}
+
+		img {
+			display: block;
+			width: 100%;
+		}
+
+		a {
+			display: block;
+			text-decoration: none;
+		}
+
+		.top {
+			background: #3a85d0;
+			font-size: 28px;
+			padding: 50px 0;
+			text-align: center;
+			color: #fff;
+		}
+
+		h3 {
+			font-size: 20px;
+		}
+
+		.content {
+			width: 90%;
+			margin: 0 auto;
+			padding-bottom: 30px;
+		}
+
+		.content h2 {
+			margin: 40px 0;
+		}
+
+		.box {
+			overflow: hidden;
+		}
+
+		.card {
+			display: block;
+			float: left;
+			width: 22%;
+			margin: 0 1%;
+			margin-bottom: 30px;
+			border: 1px solid rgba(0, 0, 0, .125);
+			border-radius: 5px;
+			overflow: hidden;
+			cursor: pointer;
+			box-shadow: 0 .125rem .25rem rgba(0, 0, 0, .075);
+			color: #333;
+		}
+
+		.card:hover {
+			box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15)
+		}
+
+		.name {
+			white-space: nowrap;
+		}
+
+		.img-wrap {
+			width: 100%;
+			height: 230px;
+			overflow: hidden;
+		}
+
+		.bottom-msg {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			padding: 16px;
+		}
+
+		@media screen and (min-width: 150px) and (max-width: 1023px) {
+			.top {
+				font-size: 18px;
+			}
+
+			h3 {
+				font-size: 14px;
+			}
+
+			.card {
+				width: 100%;
+				margin-right: 0;
+				margin-bottom: 20px;
+			}
+		}
+	</style>
+</head>
+
+<body>
+	<div class="top">
+		<h1>LetsGo Viewer</h1>
+		<h3>Large-Scale Garage Modeling and Rendering via LiDAR-Assisted Gaussian Primitives</h3>
+	</div>
+
+	<div class="content">
+		<h2>Real-Time Level-of-detail Viewer Demos</h2>
+		<div class="box">
+			<a href="small_garage.html" class="card">
+				<div class="img-wrap">
+					<img src="./images/sig.png" alt="">
+				</div>
+				<div class="bottom-msg">
+					<div class="name">small garage</div>
+					<div class="size">2990MB</div>
+				</div>
+			</a>
+
+			<a href="demo.html" class="card">
+				<div class="img-wrap">
+					<img src="./images/demo.png" alt="">
+				</div>
+				<div class="bottom-msg">
+					<div class="name">Demo</div>
+					<div class="size">2990MB</div>
+				</div>
+			</a>
+			
+			<a href="UAVD4L.html" class="card">
+				<div class="img-wrap">
+					<img src="./images/UAVDL.JPG" alt="">
+				</div>
+				<div class="bottom-msg">
+					<div class="name">Demo</div>
+					<div class="size">2990MB</div>
+				</div>
+			</a>
+
+		</div>
+	</div>
+	<script>
+
+		function handleResize() {
+			var winWidth = window.innerWidth;
+			var cal = winWidth > 1023 ? 0.215 : 1;
+			var cards = document.querySelectorAll('.img-wrap');
+			for (var i = 0; i < cards.length; i++) {
+				cards[i].style.height = winWidth * 0.9 * cal + 'px'
+			}
+		}
+		handleResize()
+		window.addEventListener("resize", handleResize);
+
+	</script>
+</body>
+
+</html>
