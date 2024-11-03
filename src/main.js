@@ -491,8 +491,10 @@ void main () {
 
 `.trim();
 
-let defaultViewMatrix = dataSource.defaultViewMatrix;
-
+const cams = await fetch(dataSource.metaData);
+const data = await cams.json();
+let defaultViewMatrix = data.defaultViewMatrix;
+// let defaultViewMatrix = dataSource.defaultViewMatrix
 let viewMatrix = defaultViewMatrix;
 let lastViewMatrix = viewMatrix;
 let projectionMatrix;
