@@ -1,3 +1,68 @@
+class NURBSCurve {
+    constructor(controlPoints, knots, weights) {
+        const n = controlPoints.length; // 控制点数量
+        this.degree = Math.min(n - 1, 3); // 根据控制点数量确定度数
+        this.controlPoints = controlPoints;
+        this.knots = knots;
+        this.weights = weights;
+    }
+
+    // 计算NURBS曲线上的一个点，参数u在[0,1]之间
+    evaluate(u) {
+        const n = this.controlPoints.length - 1;
+        const d = this.degree;
+
+        // 计算权重化后的控制点
+        const weightedControlPoints = this.controlPoints.map((point, i) => {
+            const w = this.weights[i];
+            return point.map(coord => coord * w); // [x*w, y*w, z*w]
+        });
+
+        // 基函数值
+        const N = this.basisFunctions(u);
+
+        // 计算曲线上的点
+        let sumWeight = 0;
+        let curvePoint = [0, 0, 0];
+        for (let i = 0; i <= n; i++) {
+            sumWeight += N[i] * this.weights[i];
+            curvePoint = curvePoint.map((val, j) => val + N[i] * weightedControlPoints[i][j]);
+        }
+
+        // 除以总权重得到最终坐标
+        if (sumWeight === 0) {
+            console.warn('Sum of weights is zero. Check your control points and weights.');
+            return [0, 0, 0]; // 返回一个默认值，避免出现 null
+        }
+
+        return curvePoint.map(coord => coord / sumWeight);
+    }
+
+    // 计算给定 u 的基函数值
+    basisFunctions(u) {
+        const n = this.controlPoints.length - 1;
+        const d = this.degree;
+        const N = new Array(n + 1).fill(0);
+
+        // 初始化基函数值
+        for (let i = 0; i <= n; i++) {
+            N[i] = (u >= this.knots[i] && u < this.knots[i + 1]) ? 1 : 0;
+        }
+
+        // 递推计算基函数
+        for (let k = 1; k <= d; k++) {
+            for (let i = 0; i <= n - k; i++) {
+                const leftDenom = this.knots[i + k] - this.knots[i];
+                const rightDenom = this.knots[i + k + 1] - this.knots[i + 1];
+                const leftTerm = leftDenom === 0 ? 0 : ((u - this.knots[i]) / leftDenom) * N[i];
+                const rightTerm = rightDenom === 0 ? 0 : ((this.knots[i + k + 1] - u) / rightDenom) * N[i + 1];
+                N[i] = leftTerm + rightTerm;
+            }
+        }
+
+        return N;
+    }
+}
 // Description: Main file for the project
 const settings = {
 	renderingMode: "Octree", // "Octree", "Gaussian"
@@ -71,7 +136,7 @@ const startReloadLod = () => {
 
 function updateSaveCountDisplay() {
     const saveCountDisplay = document.getElementById('saveCountDisplay');
-    saveCountDisplay.textContent = `已保存: ${savedViewMatrices.length}`;
+    saveCountDisplay.textContent = `View: ${savedViewMatrices.length}`;
 }
 
 let savedViewMatrices = [];
@@ -105,22 +170,83 @@ function removeLastViewMatrix() {
     }
 }
 
+// 插值函数
+function nurbsInterpolateViewMatrices(controlPoints) {
+    const numPoints = controlPoints.length;
+
+    // 生成均匀节点向量
+    const knots = [];
+    for (let i = 0; i < numPoints + 1; i++) {
+        knots.push(i);
+    }
+
+    // 创建 NURBS 曲线，假设权重均为1
+    const nurbsCurve = new NURBSCurve(controlPoints, knots, controlPoints.map(() => 1.0));
+
+    const interpolatedPoints = [];
+    const numInterpolations = 100; // 设置插值的数量
+
+    // 计算插值点
+    for (let i = 0; i <= numInterpolations; i++) {
+        const u = i / numInterpolations * (knots[knots.length - 1] - knots[0]); // 计算参数 u
+        interpolatedPoints.push(nurbsCurve.evaluate(u)); // 计算 NURBS 曲线上的点
+    }
+
+    return interpolatedPoints;
+}
+
+// 导出视角矩阵为 JSON 文件
 function exportViewMatricesToJson() {
-    // 将视角数据转换为 JSON 字符串
-    const dataStr = JSON.stringify(savedViewMatrices, null, 2);
+    // 提取保存的视角矩阵的平移部分
+    const controlPoints = savedViewMatrices.map(matrix => {
+        const translation = matrix.slice(12, 15);  // 提取平移部分
+        return translation;
+    });
+	const interpolatedTranslations =  nurbsInterpolateViewMatrices(controlPoints);
+
+    const interpolatedMatrices = interpolatedTranslations.map((translation, i) => {
+        const baseMatrix = savedViewMatrices[Math.floor(i / (interpolatedTranslations.length / savedViewMatrices.length))];
+        const newMatrix = [...baseMatrix];
+        newMatrix[12] = translation[0];
+        newMatrix[13] = translation[1];
+        newMatrix[14] = translation[2];
+        return newMatrix;
+    });
+
+	// 替换插值后的第一个和最后一个矩阵
+    if (savedViewMatrices.length > 0) {
+        interpolatedMatrices[0] = savedViewMatrices[0]; // 用第一个保存的矩阵替换插值后的第一个
+        interpolatedMatrices[interpolatedMatrices.length - 1] = savedViewMatrices[savedViewMatrices.length - 1]; // 用最后一个保存的矩阵替换插值后的最后一个
+    }
+    const dataStr = JSON.stringify(interpolatedMatrices, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 
-    // 创建一个临时的 <a> 元素，模拟文件下载
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'saved_view_matrices.json';
+    a.download = 'interpolated_view_matrices.json';
     a.click();
 
-    // 释放 URL 对象
     URL.revokeObjectURL(url);
-    console.log("视角数据已导出为 JSON 文件！");
+    console.log("视角数据已导出为插值后的 JSON 文件！");
 }
+
+// function exportViewMatricesToJson() {
+//     // 将视角数据转换为 JSON 字符串
+//     const dataStr = JSON.stringify(savedViewMatrices, null, 2);
+//     const blob = new Blob([dataStr], { type: 'application/json' });
+//     const url = URL.createObjectURL(blob);
+
+//     // 创建一个临时的 <a> 元素，模拟文件下载
+//     const a = document.createElement('a');
+//     a.href = url;
+//     a.download = 'saved_view_matrices.json';
+//     a.click();
+
+//     // 释放 URL 对象
+//     URL.revokeObjectURL(url);
+//     console.log("视角数据已导出为 JSON 文件！");
+// }
 
 
 function getProjectionMatrix(fx, fy, width, height) {
@@ -660,8 +786,8 @@ function initGUI(resize) {
 
     // 计数显示
     const saveCountDisplay = document.createElement('span');
-    saveCountDisplay.textContent = '已保存: 0';
-	saveCountDisplay.style.width = '80px'; // 设置计数显示宽度
+    saveCountDisplay.textContent = 'View: 0';
+	saveCountDisplay.style.width = '70px'; // 设置计数显示宽度
     saveCountDisplay.style.textAlign = 'center';
     saveCountDisplay.style.marginRight = '10px';
     saveCountDisplay.id = 'saveCountDisplay';
@@ -672,20 +798,22 @@ function initGUI(resize) {
 	removeButton.style.width = '30px';
     removeButton.onclick = removeLastViewMatrix;
 
+    // 导出按钮
+    const exportButton = document.createElement('button');
+    exportButton.textContent = 'Save';
+    exportButton.style.margin = '5px';
+	exportButton.style.width = '40px'
+    exportButton.onclick = exportViewMatricesToJson;
+
+
     // 将加号、计数显示和减号按钮添加到容器
     controlsContainer.appendChild(addButton);
     controlsContainer.appendChild(removeButton);
 	controlsContainer.appendChild(saveCountDisplay);
-
-    // 导出按钮
-    const exportButton = document.createElement('button');
-    exportButton.textContent = '导出视角为 JSON';
-    exportButton.style.margin = '5px';
-    exportButton.onclick = exportViewMatricesToJson;
+	controlsContainer.appendChild(exportButton);
 
     // 将容器和导出按钮添加到 GUI 中
     gui.domElement.appendChild(controlsContainer);
-    gui.domElement.appendChild(exportButton);
 	
 	let intervalId;
 	// 创建一个新的 div 元素来包含按钮
