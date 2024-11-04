@@ -69,18 +69,59 @@ const startReloadLod = () => {
 	}
 };
 
-// let reloadDefault = false;
+function updateSaveCountDisplay() {
+    const saveCountDisplay = document.getElementById('saveCountDisplay');
+    saveCountDisplay.textContent = `已保存: ${savedViewMatrices.length}`;
+}
 
-// const startReloadDefault = () => {
-// 	const tempid = setTimeout(() => {
-// 		if (!reloadDefault && !default_status) {
-// 			reloadDefault = true;
-// 			default_status = true;
-// 		}
+let savedViewMatrices = [];
 
-// 		clearTimeout(tempid);
-// 	}, 10);
-// };
+function saveCurrentViewMatrix() {
+    // 保存当前的 viewMatrix
+    savedViewMatrices.push([...viewMatrix]);
+    
+    // 更新计数显示
+    updateSaveCountDisplay();
+    console.log("视角已保存！", viewMatrix);
+}
+
+function removeLastViewMatrix() {
+    if (savedViewMatrices.length === 0) return;
+
+    // 删除最后一个视角
+    savedViewMatrices.pop();
+
+    // 更新计数显示
+    updateSaveCountDisplay();
+
+    // 如果存在剩余的保存视角，跳到上一个视角
+    if (savedViewMatrices.length > 0) {
+        viewMatrix = savedViewMatrices[savedViewMatrices.length - 1];
+        console.log("跳到上一个保存的视角：", viewMatrix);
+        // 重新渲染以应用视角更新
+        updateGaussianByView(viewMatrix, projectionMatrix, value, settings.maxGaussians)
+    } else {
+        console.log("没有保存的视角了！");
+    }
+}
+
+function exportViewMatricesToJson() {
+    // 将视角数据转换为 JSON 字符串
+    const dataStr = JSON.stringify(savedViewMatrices, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    // 创建一个临时的 <a> 元素，模拟文件下载
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'saved_view_matrices.json';
+    a.click();
+
+    // 释放 URL 对象
+    URL.revokeObjectURL(url);
+    console.log("视角数据已导出为 JSON 文件！");
+}
+
 
 function getProjectionMatrix(fx, fy, width, height) {
 	const znear = 0.2;
@@ -604,6 +645,47 @@ function initGUI(resize) {
 		// 	}
 		// })
 
+    // 创建一个容器 div 用于放置加号、减号和计数显示
+    const controlsContainer = document.createElement('div');
+    controlsContainer.style.display = 'flex';
+    controlsContainer.style.alignItems = 'center';
+    controlsContainer.style.margin = '5px';
+
+    // 加号按钮 - 用于保存当前视角
+    const addButton = document.createElement('button');
+    addButton.textContent = '+';
+	addButton.style.width = '30px';
+    addButton.style.marginRight = '5px';
+    addButton.onclick = saveCurrentViewMatrix;
+
+    // 计数显示
+    const saveCountDisplay = document.createElement('span');
+    saveCountDisplay.textContent = '已保存: 0';
+	saveCountDisplay.style.width = '80px'; // 设置计数显示宽度
+    saveCountDisplay.style.textAlign = 'center';
+    saveCountDisplay.style.marginRight = '10px';
+    saveCountDisplay.id = 'saveCountDisplay';
+
+    // 减号按钮 - 用于删除最后保存的视角
+    const removeButton = document.createElement('button');
+    removeButton.textContent = '-';
+	removeButton.style.width = '30px';
+    removeButton.onclick = removeLastViewMatrix;
+
+    // 将加号、计数显示和减号按钮添加到容器
+    controlsContainer.appendChild(addButton);
+    controlsContainer.appendChild(removeButton);
+	controlsContainer.appendChild(saveCountDisplay);
+
+    // 导出按钮
+    const exportButton = document.createElement('button');
+    exportButton.textContent = '导出视角为 JSON';
+    exportButton.style.margin = '5px';
+    exportButton.onclick = exportViewMatricesToJson;
+
+    // 将容器和导出按钮添加到 GUI 中
+    gui.domElement.appendChild(controlsContainer);
+    gui.domElement.appendChild(exportButton);
 	
 	let intervalId;
 	// 创建一个新的 div 元素来包含按钮
@@ -1836,184 +1918,186 @@ async function updateGaussianDefault() {
 	})
 }
 
-async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxCount) {
-    if (update_count > 1) return;
-    update_count += 1;
+// async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxCount) {
+//     if (update_count > 1) return;
+//     update_count += 1;
 
-    const start = performance.now();
-    stopReading = false;
-    gaussianSplats.extraVertexCount = 0;
+//     const start = performance.now();
+//     stopReading = false;
+//     gaussianSplats.extraVertexCount = 0;
 
-    updateGaussianDefault();
-    if (maxLevel === settings.baseLevel) { 
-        update_count = 0;
-        return; 
-    }
+//     updateGaussianDefault();
+//     if (maxLevel === settings.baseLevel) { 
+//         update_count = 0;
+//         return; 
+//     }
 
-    let ZDepthMax = settings.depthMax;
-    const beta = Math.log(maxLevel + 1);
-    let isOverMaxLimit = false;
-    let loadingPromises = [];
+//     let ZDepthMax = settings.depthMax;
+//     const beta = Math.log(maxLevel + 1);
+//     let isOverMaxLimit = false;
+//     let loadingPromises = [];
 
-    // 初始化主队列，用宽度优先
-    let queue = baseLevelQueue.map(item => ({
-        node: item.node,
-        level: item.level,
-        ...markCubeVisibility(viewMatrix, projectionMatrix, item.node),
-    })).filter(item => item.visibility); // 初步过滤不可见节点
+//     // 初始化主队列，用宽度优先
+//     let queue = baseLevelQueue.map(item => ({
+//         node: item.node,
+//         level: item.level,
+//         ...markCubeVisibility(viewMatrix, projectionMatrix, item.node),
+//     })).filter(item => item.visibility); // 初步过滤不可见节点
 
-    while (queue.length > 0 && !isOverMaxLimit) {
-        let { node, level, ZDepth, visibility } = queue.shift();
+//     while (queue.length > 0 && !isOverMaxLimit) {
+//         let { node, level, ZDepth, visibility } = queue.shift();
         
-        if (!visibility || node.reading || level > maxLevel) continue;
-        node.reading = true;
+//         if (!visibility || node.reading || level > maxLevel) continue;
+//         node.reading = true;
 
-        // 计算动态加载层级
-        const actLevel = Math.floor(Math.min(
-            Math.max((maxLevel + 1) * Math.exp(-beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), 
-            maxLevel
-        ));
+//         // 计算动态加载层级
+//         const actLevel = Math.floor(Math.min(
+//             Math.max((maxLevel + 1) * Math.exp(-beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), 
+//             maxLevel
+//         ));
 
-        if (level >= actLevel) {
-            // 加入加载任务
-            loadingPromises.push(octreeGeometryLoader.load(node, octreeFileUrl).then(() => {
-                gaussianSplats.extraVertexCount += node.numPoints;
-                if (gaussianSplats.extraVertexCount > maxCount) isOverMaxLimit = true;
-            }));
-        }
+//         if (level >= actLevel) {
+//             // 加入加载任务
+//             loadingPromises.push(octreeGeometryLoader.load(node, octreeFileUrl).then(() => {
+//                 gaussianSplats.extraVertexCount += node.numPoints;
+//                 if (gaussianSplats.extraVertexCount > maxCount) isOverMaxLimit = true;
+//             }));
+//         }
 
-        // 处理子节点，仅在当前层级小于 maxLevel 且未达最大加载限制时
-        if (level < maxLevel && !isOverMaxLimit) {
-            for (let cid = 0; cid < 8; cid++) {
-                const child = node.children[cid];
-                if (child) {
-                    let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
-                    if (visibility) queue.push({ node: child, level: level + 1, ZDepth, visibility });
-                }
-            }
-        }
-    }
+//         // 处理子节点，仅在当前层级小于 maxLevel 且未达最大加载限制时
+//         if (level < maxLevel && !isOverMaxLimit) {
+//             for (let cid = 0; cid < 8; cid++) {
+//                 const child = node.children[cid];
+//                 if (child) {
+//                     let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
+//                     if (visibility) queue.push({ node: child, level: level + 1, ZDepth, visibility });
+//                 }
+//             }
+//         }
+//     }
 
-    // 等待所有加载任务完成
-    await Promise.all(loadingPromises);
+//     // 等待所有加载任务完成
+//     await Promise.all(loadingPromises);
     
-    // 完成加载后更新点云缓冲区
-    gaussianSplats.extraBuffer = new ArrayBuffer(gaussianSplats.rowLength * gaussianSplats.extraVertexCount);
-    let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
-    await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0);
+//     // 完成加载后更新点云缓冲区
+//     gaussianSplats.extraBuffer = new ArrayBuffer(gaussianSplats.rowLength * gaussianSplats.extraVertexCount);
+//     let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
+//     await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0);
 
-    worker.postMessage({
-        buffer: gaussianSplats.extraBuffer,
-        vertexCount: gaussianSplats.extraVertexCount,
-    });
+//     worker.postMessage({
+//         buffer: gaussianSplats.extraBuffer,
+//         vertexCount: gaussianSplats.extraVertexCount,
+//     });
 
-    console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${(performance.now() - start) / 1000}s`);
-    update_count = 0;
+//     console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${(performance.now() - start) / 1000}s`);
+//     update_count = 0;
+// }
+
+
+async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxCount) {
+	console.log(update_count, maxLevel);
+	update_count += 1;
+	if (update_count > 1) return;
+
+	const start = performance.now();
+
+	stopReading = false;
+	gaussianSplats.extraVertexCount = 0;
+
+	updateGaussianDefault();
+	if (maxLevel === settings.baseLevel) { 
+		update_count = 0;
+		return; 
+	}
+
+	let ZDepthMax = settings.depthMax;
+
+	let isOverMaxLimit = false;
+	for (let base_index = 0; base_index < baseLevelQueue.length; base_index++) {
+		// console.log(baseLevelQueue[base_index].node);
+		let queue = [];
+		
+		let {ZDepth, visibility} = markCubeVisibility(viewMatrix, projectionMatrix, baseLevelQueue[base_index].node);
+		queue.push({ node: baseLevelQueue[base_index].node, level: baseLevelQueue[base_index].level, ZDepth: ZDepth, visibility: visibility });
+
+		if (!visibility) {
+			queue.pop();
+		}
+
+		if (queue.length > 0 && isOverMaxLimit) {
+			const { node, level, ZDepth, visibility } = queue.shift();
+			node.visibility = visibility;
+			await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
+			gaussianSplats.extraVertexCount += node.numPoints;
+		}
+		
+		//first loop
+		while (queue.length > 0 && !isOverMaxLimit) {
+			const { node, level, ZDepth, visibility } = queue.shift();
+			node.reading = false;
+
+			if (level <= maxLevel) { // reduce some level to avoid too many children
+				// set the children of the current node
+
+				{
+					const beta = Math.log(maxLevel + 1)
+					const actLevel = Math.floor(Math.min(Math.max((maxLevel + 1) * Math.exp(-1.0 * beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), maxLevel));
+					// console.log(actLevel, level, visibility)
+					node.visibility = level >= actLevel ? visibility : false;
+				}
+
+				if (node.visibility && !node.reading) {
+					await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
+					gaussianSplats.extraVertexCount += node.numPoints;
+
+					if (gaussianSplats.extraVertexCount > maxCount) {
+						isOverMaxLimit = true;
+						// console.log("Stop Reading Gaussian Geometry!", gaussianSplats.extraVertexCount, maxCount)
+						break;
+					}
+
+				} else {
+
+					if (level < maxLevel) {
+						for (let cid = 0; cid < 8; cid++) {
+							const child = node.children[cid];
+							if (child) {
+								let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
+								if (visibility) {
+									queue.push({ node: child, level: level + 1, ZDepth: ZDepth, visibility: visibility });
+								}
+							}
+						}
+					}
+
+				}
+			}
+		}
+	}
+
+
+	// Send gaussian data to the worker
+	
+	gaussianSplats.extraBuffer = new ArrayBuffer(gaussianSplats.rowLength * gaussianSplats.extraVertexCount);
+	gaussianSplats.loadedCount = 0;
+	gaussianSplats.lastloadedCount = 0;
+
+	let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
+	await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0); // put something to extrabuffer
+
+	worker.postMessage({
+		buffer: gaussianSplats.extraBuffer,
+		vertexCount: gaussianSplats.extraVertexCount,
+	})
+
+	const loadTime = `${((performance.now() - start) / 1000).toFixed(3)}s`
+	progressTextDom.innerHTML = ``;
+	reloadLod = false;
+	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${loadTime}.`)
+	update_count = 0;
 }
 
 
-// async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxCount) {
-// 	console.log(update_count, maxLevel);
-// 	update_count += 1;
-// 	if (update_count > 1) return;
-
-// 	const start = performance.now();
-
-// 	stopReading = false;
-// 	gaussianSplats.extraVertexCount = 0;
-
-// 	updateGaussianDefault();
-// 	if (maxLevel === settings.baseLevel) { 
-// 		update_count = 0;
-// 		return; 
-// 	}
-
-// 	let ZDepthMax = settings.depthMax;
-
-// 	let isOverMaxLimit = false;
-// 	for (let base_index = 0; base_index < baseLevelQueue.length; base_index++) {
-// 		// console.log(baseLevelQueue[base_index].node);
-// 		let queue = [];
-		
-// 		let {ZDepth, visibility} = markCubeVisibility(viewMatrix, projectionMatrix, baseLevelQueue[base_index].node);
-// 		queue.push({ node: baseLevelQueue[base_index].node, level: baseLevelQueue[base_index].level, ZDepth: ZDepth, visibility: visibility });
-
-// 		if (!visibility) {
-// 			queue.pop();
-// 		}
-
-// 		if (queue.length > 0 && isOverMaxLimit) {
-// 			const { node, level, ZDepth, visibility } = queue.shift();
-// 			node.visibility = visibility;
-// 			await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
-// 			gaussianSplats.extraVertexCount += node.numPoints;
-// 		}
-		
-// 		//first loop
-// 		while (queue.length > 0 && !isOverMaxLimit) {
-// 			const { node, level, ZDepth, visibility } = queue.shift();
-// 			node.reading = false;
-
-// 			if (level <= maxLevel) { // reduce some level to avoid too many children
-// 				// set the children of the current node
-
-// 				{
-// 					const beta = Math.log(maxLevel + 1)
-// 					const actLevel = Math.floor(Math.min(Math.max((maxLevel + 1) * Math.exp(-1.0 * beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), maxLevel));
-// 					// console.log(actLevel, level, visibility)
-// 					node.visibility = level >= actLevel ? visibility : false;
-// 				}
-
-// 				if (node.visibility && !node.reading) {
-// 					await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
-// 					gaussianSplats.extraVertexCount += node.numPoints;
-
-// 					if (gaussianSplats.extraVertexCount > maxCount) {
-// 						isOverMaxLimit = true;
-// 						// console.log("Stop Reading Gaussian Geometry!", gaussianSplats.extraVertexCount, maxCount)
-// 						break;
-// 					}
-
-// 				} else {
-
-// 					if (level < maxLevel) {
-// 						for (let cid = 0; cid < 8; cid++) {
-// 							const child = node.children[cid];
-// 							if (child) {
-// 								let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
-// 								if (visibility) {
-// 									queue.push({ node: child, level: level + 1, ZDepth: ZDepth, visibility: visibility });
-// 								}
-// 							}
-// 						}
-// 					}
-
-// 				}
-// 			}
-// 		}
-// 	}
-
-
-// 	// Send gaussian data to the worker
-	
-// 	gaussianSplats.extraBuffer = new ArrayBuffer(gaussianSplats.rowLength * gaussianSplats.extraVertexCount);
-// 	gaussianSplats.loadedCount = 0;
-// 	gaussianSplats.lastloadedCount = 0;
-
-// 	let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
-// 	await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0); // put something to extrabuffer
-
-// 	worker.postMessage({
-// 		buffer: gaussianSplats.extraBuffer,
-// 		vertexCount: gaussianSplats.extraVertexCount,
-// 	})
-
-// 	const loadTime = `${((performance.now() - start) / 1000).toFixed(3)}s`
-// 	progressTextDom.innerHTML = ``;
-// 	reloadLod = false;
-// 	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${loadTime}.`)
-// 	update_count = 0;
-// }
 // read gaussian data from octree node
 async function readGaussianFromNode(node, gaussianSplats, campos, level) {
 	if (node.visibility && node.loaded && !node.reading) {
