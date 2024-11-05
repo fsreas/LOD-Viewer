@@ -63,6 +63,85 @@ class NURBSCurve {
         return N;
     }
 }
+
+// 四元数转换函数
+function matrixToQuaternion(matrix) {
+    const m = matrix;
+    const trace = m[0] + m[5] + m[10];
+    let q = [0, 0, 0, 1];
+
+    if (trace > 0) {
+        const s = Math.sqrt(trace + 1.0) * 2; // S=4*qw
+        q[3] = 0.25 * s;
+        q[0] = (m[9] - m[6]) / s; // qx
+        q[1] = (m[2] - m[8]) / s; // qy
+        q[2] = (m[4] - m[1]) / s; // qz
+    } else if ((m[0] > m[5]) && (m[0] > m[10])) {
+        const s = Math.sqrt(1.0 + m[0] - m[5] - m[10]) * 2; // S=4*qx
+        q[3] = (m[9] - m[6]) / s;
+        q[0] = 0.25 * s;
+        q[1] = (m[1] + m[4]) / s;
+        q[2] = (m[2] + m[8]) / s;
+    } else if (m[5] > m[10]) {
+        const s = Math.sqrt(1.0 + m[5] - m[0] - m[10]) * 2; // S=4*qy
+        q[3] = (m[2] - m[8]) / s;
+        q[0] = (m[1] + m[4]) / s;
+        q[1] = 0.25 * s;
+        q[2] = (m[6] + m[9]) / s;
+    } else {
+        const s = Math.sqrt(1.0 + m[10] - m[0] - m[5]) * 2; // S=4*qz
+        q[3] = (m[4] - m[1]) / s;
+        q[0] = (m[2] + m[8]) / s;
+        q[1] = (m[6] + m[9]) / s;
+        q[2] = 0.25 * s;
+    }
+
+    return q;
+}
+
+function quaternionToMatrix(q) {
+    const [x, y, z, w] = q;
+    const xx = x * x;
+    const xy = x * y;
+    const xz = x * z;
+    const xw = x * w;
+    const yy = y * y;
+    const yz = y * z;
+    const yw = y * w;
+    const zz = z * z;
+    const zw = z * w;
+
+    // return [
+    //     1 - 2 * (yy + zz), 2 * (xy - zw), 2 * (xz + yw), 0,
+    //     2 * (xy + zw), 1 - 2 * (xx + zz), 2 * (yz - xw), 0,
+    //     2 * (xz - yw), 2 * (yz + xw), 1 - 2 * (xx + yy), 0,
+    //     0, 0, 0, 1
+    // ];
+
+	return [
+        1 - 2 * (yy + zz), 2 * (xy + zw), 2 * (xz - yw), 0,
+        2 * (xy - zw), 1 - 2 * (xx + zz), 2 * (yz + xw), 0,
+        2 * (xz + yw), 2 * (yz - xw), 1 - 2 * (xx + yy), 0,
+        0, 0, 0, 1
+    ];
+}
+
+// 球面线性插值 (SLERP)
+function slerp(q1, q2, t) {
+    const dot = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
+    const theta = Math.acos(dot) * t;
+    const q2t = [q2[0] - dot * q1[0], q2[1] - dot * q1[1], q2[2] - dot * q1[2], q2[3] - dot * q1[3]];
+    const norm = Math.sqrt(q2t[0] * q2t[0] + q2t[1] * q2t[1] + q2t[2] * q2t[2] + q2t[3] * q2t[3]);
+    if (norm < 1e-6) return q1; // 如果 q1 和 q2 非常接近，返回 q1
+    const q2tNormalized = q2t.map(q => q / norm);
+    return [
+        q1[0] * Math.cos(theta) + q2tNormalized[0] * Math.sin(theta),
+        q1[1] * Math.cos(theta) + q2tNormalized[1] * Math.sin(theta),
+        q1[2] * Math.cos(theta) + q2tNormalized[2] * Math.sin(theta),
+        q1[3] * Math.cos(theta) + q2tNormalized[3] * Math.sin(theta)
+    ];
+}
+
 // Description: Main file for the project
 const settings = {
 	renderingMode: "Octree", // "Octree", "Gaussian"
@@ -140,6 +219,8 @@ function updateSaveCountDisplay() {
 }
 
 let savedViewMatrices = [];
+let trajectory = [];
+let ifPlay = null;
 
 function saveCurrentViewMatrix() {
     // 保存当前的 viewMatrix
@@ -164,89 +245,182 @@ function removeLastViewMatrix() {
         viewMatrix = savedViewMatrices[savedViewMatrices.length - 1];
         console.log("跳到上一个保存的视角：", viewMatrix);
         // 重新渲染以应用视角更新
-        updateGaussianByView(viewMatrix, projectionMatrix, value, settings.maxGaussians)
+        updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, settings.maxGaussians)
     } else {
         console.log("没有保存的视角了！");
     }
 }
 
-// 插值函数
-function nurbsInterpolateViewMatrices(controlPoints) {
-    const numPoints = controlPoints.length;
-
-    // 生成均匀节点向量
+function generateKnots(numControlPoints) {
     const knots = [];
-    for (let i = 0; i < numPoints + 1; i++) {
-        knots.push(i);
+    const n = numControlPoints;
+    const p = Math.min(n - 1, 3);
+
+    // 添加前 p + 1 个 0
+    for (let i = 0; i <= p; i++) {
+        knots.push(0);
     }
 
-    // 创建 NURBS 曲线，假设权重均为1
-    const nurbsCurve = new NURBSCurve(controlPoints, knots, controlPoints.map(() => 1.0));
-
-    const interpolatedPoints = [];
-    const numInterpolations = 100; // 设置插值的数量
-
-    // 计算插值点
-    for (let i = 0; i <= numInterpolations; i++) {
-        const u = i / numInterpolations * (knots[knots.length - 1] - knots[0]); // 计算参数 u
-        interpolatedPoints.push(nurbsCurve.evaluate(u)); // 计算 NURBS 曲线上的点
+    // 添加中间的均匀分布的 knots
+    for (let i = 1; i <= n - p - 1; i++) {
+        knots.push(i / (n - p));
     }
 
-    return interpolatedPoints;
+    // 添加后 p + 1 个 1
+    for (let i = 0; i <= p; i++) {
+        knots.push(1);
+    }
+
+    return knots;
 }
+function transposeFromFlatArray(flatArray) {
+    if (flatArray.length !== 16) {
+        throw new Error("Input array must have exactly 16 elements.");
+    }
 
-// 导出视角矩阵为 JSON 文件
-function exportViewMatricesToJson() {
-    // 提取保存的视角矩阵的平移部分
-    const controlPoints = savedViewMatrices.map(matrix => {
-        const translation = matrix.slice(12, 15);  // 提取平移部分
-        return translation;
-    });
-	const interpolatedTranslations =  nurbsInterpolateViewMatrices(controlPoints);
+    const transposed = new Array(16);
 
-    const interpolatedMatrices = interpolatedTranslations.map((translation, i) => {
-        const baseMatrix = savedViewMatrices[Math.floor(i / (interpolatedTranslations.length / savedViewMatrices.length))];
-        const newMatrix = [...baseMatrix];
+    for (let i = 0; i < 4; i++) {
+        for (let j = 0; j < 4; j++) {
+            transposed[i * 4 + j] = flatArray[j * 4 + i]; // 按列映射到行
+        }
+    }
+
+    return transposed;
+}
+// 插值函数，包含平移和旋转
+function saveViewMatricesToTrajectory() {
+	const numInterpolatedPoints = 200;
+    // 提取保存的视角矩阵的平移和旋转部分
+    const controlPointsTranslation = savedViewMatrices.map(matrix => matrix.slice(12, 15));  // 提取平移部分
+    // const controlPointsRotation = savedViewMatrices.map(matrix => matrix.slice(0, 9));  // 提取旋转部分的前3x3矩阵
+
+    // 对平移进行插值
+    const translatedKnots = generateKnots(controlPointsTranslation.length);
+    const nurbsCurve = new NURBSCurve(controlPointsTranslation, translatedKnots, Array(controlPointsTranslation.length).fill(1));
+	const interpolatedTranslations = [];
+
+	for (let i = 0; i <= numInterpolatedPoints; i++) {
+		const u = i / numInterpolatedPoints; // 计算当前的 u 值
+		const point = nurbsCurve.evaluate(u); // 获取曲线上的点
+		interpolatedTranslations.push(point); // 将点添加到结果数组中
+	}
+
+    // 对旋转进行插值
+    const quaternionControlPoints = savedViewMatrices.map(matrix => (matrixToQuaternion(transposeFromFlatArray(matrix))));
+    const interpolatedRotations = [];
+
+    for (let i = 0; i < numInterpolatedPoints; i++) {
+        const t = i / (numInterpolatedPoints - 1); // t 在 [0, 1] 之间
+        const index = Math.floor(t * (quaternionControlPoints.length - 1));
+        const nextIndex = Math.min(index + 1, quaternionControlPoints.length - 1);
+        const q1 = quaternionControlPoints[index];
+        const q2 = quaternionControlPoints[nextIndex];
+
+        const slerpedQuaternion = slerp(q1, q2, t * (quaternionControlPoints.length - 1) - index);
+        interpolatedRotations.push(slerpedQuaternion);
+    }
+
+    // 创建插值后的矩阵
+    const interpolatedMatrices = [];
+    for (let i = 0; i < numInterpolatedPoints; i++) {
+        const translation = interpolatedTranslations[i];
+        const rotation = interpolatedRotations[i];
+        const newMatrix = Array(16).fill(0);
+        newMatrix[15] = 1; // 设定齐次坐标
+
+        // 设置旋转矩阵的部分
+        const rotationMatrix = quaternionToMatrix(rotation);
+        for (let j = 0; j < 16; j++) {
+            newMatrix[j] = rotationMatrix[j];
+        }
+
+        // 设置平移部分
         newMatrix[12] = translation[0];
         newMatrix[13] = translation[1];
         newMatrix[14] = translation[2];
-        return newMatrix;
-    });
 
-	// 替换插值后的第一个和最后一个矩阵
+        interpolatedMatrices.push(newMatrix);
+    }
+
+    // 替换插值后的第一个和最后一个矩阵
     if (savedViewMatrices.length > 0) {
         interpolatedMatrices[0] = savedViewMatrices[0]; // 用第一个保存的矩阵替换插值后的第一个
         interpolatedMatrices[interpolatedMatrices.length - 1] = savedViewMatrices[savedViewMatrices.length - 1]; // 用最后一个保存的矩阵替换插值后的最后一个
     }
-    const dataStr = JSON.stringify(interpolatedMatrices, null, 2);
+
+    trajectory = interpolatedMatrices;
+	if (trajectory.length !== 0) {
+		exportViewMatricesToJson();
+		console.log("已保存相机轨迹！");
+	}
+}
+
+
+function ClearTrajectory() {
+	trajectory = [];
+	savedViewMatrices = [];
+	updateSaveCountDisplay();
+}
+
+ // 载入插值的 JSON 文件
+ async function loadInterpolatedMatrices() {
+	if (trajectory.length === 0) {
+		const response = await fetch('interpolated_view_matrices.json');
+		trajectory = await response.json();
+		if (trajectory.length !== 0) {
+			console.log("已导入相机轨迹！")
+		};
+	}
+}
+
+// 播放动画
+function PlayTrajectory() {
+	if (trajectory.length === 0) {
+		console.log("无相机轨迹！");
+		return;
+	};
+	if (ifPlay) return; // 如果动画已经在播放，直接返回
+
+	var currentMatrixIndex = 0;
+
+
+	// 开始播放动画，间隔时间可以根据需求调整
+	ifPlay = setInterval(async () => {
+		if (currentMatrixIndex >= trajectory.length) {
+			// 动画播放结束，清除计时器
+			clearInterval(ifPlay);
+			ifPlay = null;
+			console.log("播放结束！")
+			return;
+		}
+
+		// 设置当前矩阵到 viewer
+		viewMatrix = trajectory[currentMatrixIndex];
+		await updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, settings.maxGaussians)
+		
+		// 前进到下一个矩阵
+		currentMatrixIndex++;
+	}, 100); // 100 毫秒间隔
+}
+
+
+function exportViewMatricesToJson() {
+    // 将视角数据转换为 JSON 字符串
+    const dataStr = JSON.stringify(trajectory, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
 
+    // 创建一个临时的 <a> 元素，模拟文件下载
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'interpolated_view_matrices.json';
+    a.download = 'saved_view_matrices.json';
     a.click();
 
+    // 释放 URL 对象
     URL.revokeObjectURL(url);
-    console.log("视角数据已导出为插值后的 JSON 文件！");
+    console.log("视角数据已导出为 JSON 文件！");
 }
-
-// function exportViewMatricesToJson() {
-//     // 将视角数据转换为 JSON 字符串
-//     const dataStr = JSON.stringify(savedViewMatrices, null, 2);
-//     const blob = new Blob([dataStr], { type: 'application/json' });
-//     const url = URL.createObjectURL(blob);
-
-//     // 创建一个临时的 <a> 元素，模拟文件下载
-//     const a = document.createElement('a');
-//     a.href = url;
-//     a.download = 'saved_view_matrices.json';
-//     a.click();
-
-//     // 释放 URL 对象
-//     URL.revokeObjectURL(url);
-//     console.log("视角数据已导出为 JSON 文件！");
-// }
 
 
 function getProjectionMatrix(fx, fy, width, height) {
@@ -681,7 +855,7 @@ function initGUI(resize) {
 	gui.add(settings, 'fps').name('FPS').disable().listen()
 	// gui.add(settings, 'renderResolution', 0.1, 1, 0.01).name('Preview Resolution')
 	//     .onChange(() =>  resize())
-
+	
 
 
 	gui.add(settings, 'lodLevel', settings.baseLevel, settings.maxLevel, 1).name('LOD Level')
@@ -697,6 +871,7 @@ function initGUI(resize) {
 				if (value < settings.baseLevel) {
 					value = settings.baseLevel;
 				}
+				settings.lodLevel = value;
 
 			} catch (error) {
 				throw error
@@ -708,6 +883,7 @@ function initGUI(resize) {
 			try {
 				stopReading = true;
 				await updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, value)
+				settings.maxGaussians = value;
 			} catch (error) {
 				throw error
 			}
@@ -803,14 +979,29 @@ function initGUI(resize) {
     exportButton.textContent = 'Save';
     exportButton.style.margin = '5px';
 	exportButton.style.width = '40px'
-    exportButton.onclick = exportViewMatricesToJson;
+    exportButton.onclick = saveViewMatricesToTrajectory;
 
+	// 清除按钮
+	const claerButton = document.createElement('button');
+	claerButton.textContent = 'Clear';
+	claerButton.style.margin = '5px';
+	claerButton.style.width = '40px'
+	claerButton.onclick = ClearTrajectory;
+
+	// 播放按钮
+    const playButton = document.createElement('button');
+    playButton.textContent = '▶';
+    playButton.style.margin = '5px';
+	playButton.style.width = '30px'
+    playButton.onclick = PlayTrajectory;
 
     // 将加号、计数显示和减号按钮添加到容器
+	controlsContainer.appendChild(playButton);
     controlsContainer.appendChild(addButton);
     controlsContainer.appendChild(removeButton);
 	controlsContainer.appendChild(saveCountDisplay);
 	controlsContainer.appendChild(exportButton);
+	controlsContainer.appendChild(claerButton);
 
     // 将容器和导出按钮添加到 GUI 中
     gui.domElement.appendChild(controlsContainer);
