@@ -1,27 +1,25 @@
 class NURBSCurve {
     constructor(controlPoints, knots, weights) {
-        const n = controlPoints.length; // 控制点数量
-        this.degree = Math.min(n - 1, 3); // 根据控制点数量确定度数
+        const n = controlPoints.length; 
+        this.degree = Math.min(n - 1, 3); 
         this.controlPoints = controlPoints;
         this.knots = knots;
         this.weights = weights;
     }
 
-    // 计算NURBS曲线上的一个点，参数u在[0,1]之间
+    // calculate the point in the curve, u in [0,1]
     evaluate(u) {
         const n = this.controlPoints.length - 1;
         const d = this.degree;
 
-        // 计算权重化后的控制点
         const weightedControlPoints = this.controlPoints.map((point, i) => {
             const w = this.weights[i];
             return point.map(coord => coord * w); // [x*w, y*w, z*w]
         });
 
-        // 基函数值
+        // value of basis functions 
         const N = this.basisFunctions(u);
 
-        // 计算曲线上的点
         let sumWeight = 0;
         let curvePoint = [0, 0, 0];
         for (let i = 0; i <= n; i++) {
@@ -29,27 +27,24 @@ class NURBSCurve {
             curvePoint = curvePoint.map((val, j) => val + N[i] * weightedControlPoints[i][j]);
         }
 
-        // 除以总权重得到最终坐标
         if (sumWeight === 0) {
             console.warn('Sum of weights is zero. Check your control points and weights.');
-            return [0, 0, 0]; // 返回一个默认值，避免出现 null
+            return [0, 0, 0]; // return a default value, not null
         }
 
         return curvePoint.map(coord => coord / sumWeight);
     }
 
-    // 计算给定 u 的基函数值
+    // basis functions
     basisFunctions(u) {
         const n = this.controlPoints.length - 1;
         const d = this.degree;
         const N = new Array(n + 1).fill(0);
 
-        // 初始化基函数值
         for (let i = 0; i <= n; i++) {
             N[i] = (u >= this.knots[i] && u < this.knots[i + 1]) ? 1 : 0;
         }
 
-        // 递推计算基函数
         for (let k = 1; k <= d; k++) {
             for (let i = 0; i <= n - k; i++) {
                 const leftDenom = this.knots[i + k] - this.knots[i];
@@ -64,7 +59,7 @@ class NURBSCurve {
     }
 }
 
-// 四元数转换函数
+// ViewMatrix to quaternion
 function matrixToQuaternion(matrix) {
     const m = matrix;
     const trace = m[0] + m[5] + m[10];
@@ -99,6 +94,7 @@ function matrixToQuaternion(matrix) {
     return q;
 }
 
+// quaternion to new ViewMatrix (modified, falttened by column)
 function quaternionToMatrix(q) {
     const [x, y, z, w] = q;
     const xx = x * x;
@@ -126,13 +122,13 @@ function quaternionToMatrix(q) {
     ];
 }
 
-// 球面线性插值 (SLERP)
+// SLERP interpolations
 function slerp(q1, q2, t) {
     const dot = q1[0] * q2[0] + q1[1] * q2[1] + q1[2] * q2[2] + q1[3] * q2[3];
     const theta = Math.acos(dot) * t;
     const q2t = [q2[0] - dot * q1[0], q2[1] - dot * q1[1], q2[2] - dot * q1[2], q2[3] - dot * q1[3]];
     const norm = Math.sqrt(q2t[0] * q2t[0] + q2t[1] * q2t[1] + q2t[2] * q2t[2] + q2t[3] * q2t[3]);
-    if (norm < 1e-6) return q1; // 如果 q1 和 q2 非常接近，返回 q1
+    if (norm < 1e-6) return q1; 
     const q2tNormalized = q2t.map(q => q / norm);
     return [
         q1[0] * Math.cos(theta) + q2tNormalized[0] * Math.sin(theta),
@@ -198,16 +194,6 @@ let update_count = 0;
 // let default_status = false;
 
 const startReloadLod = () => {
-	// const tempid = setTimeout(() => {
-	// 	if (!reloadLod) {
-	// 		reloadLod = true;
-	// 	}
-	// 	// default_status = false;
-
-	// 	clearTimeout(tempid);
-	// }, 10);
-
-
 	if (!reloadLod) {
 		reloadLod = true;
 	}
@@ -355,7 +341,6 @@ function saveViewMatricesToTrajectory() {
 		console.log("已保存相机轨迹！");
 	}
 }
-
 
 function ClearTrajectory() {
 	trajectory = [];
@@ -831,11 +816,12 @@ void main () {
 }
 
 `.trim();
-
+ 
+// Get defalut Viewmatrix
 const cams = await fetch(dataSource.metaData);
 const data = await cams.json();
 let defaultViewMatrix = data.defaultViewMatrix;
-// let defaultViewMatrix = dataSource.defaultViewMatrix
+
 let viewMatrix = defaultViewMatrix;
 let lastViewMatrix = viewMatrix;
 let projectionMatrix;
