@@ -1649,39 +1649,6 @@ async function main() {
 				carousel = true;
 			}
 		}
-	{
-		// if (
-		// 	["KeyJ", "KeyK", "KeyL", "KeyI"].some((k) => activeKeys.includes(k))
-		// ) {
-		// 	startReloadDefault();
-		// 	let d = 4;
-		// 	inv = translate4(inv, 0, 0, d);
-		// 	inv = rotate4(
-		// 		inv,
-		// 		activeKeys.includes("KeyJ")
-		// 			? -0.05
-		// 			: activeKeys.includes("KeyL")
-		// 				? 0.05
-		// 				: 0,
-		// 		0,
-		// 		1,
-		// 		0,
-		// 	);
-		// 	inv = rotate4(
-		// 		inv,
-		// 		activeKeys.includes("KeyI")
-		// 			? 0.05
-		// 			: activeKeys.includes("KeyK")
-		// 				? -0.05
-		// 				: 0,
-		// 		1,
-		// 		0,
-		// 		0,
-		// 	);
-		// 	inv = translate4(inv, 0, 0, -d);
-		// }
-
-	}
 
 		viewMatrix = invert4(inv);
 
@@ -1693,28 +1660,6 @@ async function main() {
 			inv = rotate4(inv, -0.6 * t, 0, 1, 0);
 
 			viewMatrix = invert4(inv);
-		}
-
-		if (videoPlay) {
- 			const t = Math.max((Date.now() - start) / 50, 0 );
-			let i = Math.round(t) + 50;
-			if (i >= cameras.length - 1) {
-				videoPlay = false;
-			} else {
-				viewMatrix = cameras[i].viewMatrix;
-				settings.poseId = i;
-			}
-
-			if (i % 100 == 0) {
-				reloadLod = true;
-				updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, settings.maxGaussians)
-					.catch(error => {
-						throw error;
-					});
-				reloadLod = false;
-				}
- 
-
 		}
 
 		const viewProj = multiply4(projectionMatrix, viewMatrix);
@@ -1883,18 +1828,6 @@ function nodeView(i, node) {
 	let opacity = att.opacity.array[i]
 	let scale = [att.scale_0.array[i], att.scale_1.array[i], att.scale_2.array[i]]
 	let rotation = [att.rot_0.array[i], att.rot_1.array[i], att.rot_2.array[i], att.rot_3.array[i]]
-
-	// read f_rest 
-	// let maxLoop = 32;
-	// while (true) {
-	// 	if (maxLoop-- < 0) {break;}
-	// 	for (let j = 0; j <= 23; j++) {
-	// 		if (att[`f_rest_${j}`] !== undefined && harmonic[j + 3] === undefined) {
-	// 			harmonic.push(att[`f_rest_${j}`].array[i]);
-	// 		}
-	// 	}
-	// 	if (harmonic.length === 27) {break;}
-	// }
 
 	let deg = 0
 	let sh = [att.f_dc_0.array[i], att.f_dc_1.array[i], att.f_dc_2.array[i]]
