@@ -31,9 +31,6 @@ export class NodeLoader {
 			}
 
 			let { byteOffset, byteSize } = node;
-
-			// console.log(`loading ${node.name} ${byteOffset} ${byteSize}`)
-			// let urlOctree = `${this.url}/../octree.bin`;
 			let urlOctree = octreeFileUrl;
 
 			let first = byteOffset;

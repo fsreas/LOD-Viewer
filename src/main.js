@@ -1833,6 +1833,9 @@ async function loadOctreeGeometry(rootNode) {
 		if (currentNode.level != settings.baseLevel) {
 			continue;
 		}
+		if (currentNode.level > settings.baseLevel) {
+			break;
+		}
 
 		const currentCount = currentNode.numPoints
 		for (let i = 0; i < currentCount; i++) {
@@ -2135,7 +2138,16 @@ async function updateGaussianDefault() {
 //     console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${(performance.now() - start) / 1000}s`);
 //     update_count = 0;
 // }
+function mergeBuffer(baseBuffer, extraBuffer) {
+	// 1. 创建一个新的缓冲区，大小为 baseBuffer 和 extraBuffer 的总和
+	let mergedBuffer = new ArrayBuffer(baseBuffer.byteLength + extraBuffer.byteLength);
+	const mergedView = new Uint8Array(mergedBuffer);
 
+    mergedView.set(new Uint8Array(baseBuffer), 0);
+    mergedView.set(new Uint8Array(extraBuffer), baseBuffer.byteLength);
+
+	return mergedBuffer;
+}
 
 async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxCount) {
 	// console.log(update_count, maxLevel);
@@ -2154,7 +2166,7 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	}
 
 	let ZDepthMax = settings.depthMax;
-
+	let nodeList = [];
 	let isOverMaxLimit = false;
 	for (let base_index = 0; base_index < baseLevelQueue.length; base_index++) {
 		// console.log(baseLevelQueue[base_index].node);
@@ -2172,6 +2184,7 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 			node.visibility = visibility;
 			await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
 			gaussianSplats.extraVertexCount += node.numPoints;
+			nodeList.push(node);
 		}
 		
 		//first loop
@@ -2192,7 +2205,7 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 				if (node.visibility && !node.reading) {
 					await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
 					gaussianSplats.extraVertexCount += node.numPoints;
-
+					nodeList.push(node);
 					if (gaussianSplats.extraVertexCount > maxCount) {
 						isOverMaxLimit = true;
 						// console.log("Stop Reading Gaussian Geometry!", gaussianSplats.extraVertexCount, maxCount)
@@ -2225,20 +2238,24 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 
 	let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
 	await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0); // put something to extrabuffer
+	// await readGaussianFromNodeList(nodeList, gaussianSplats, campos); // put something to extrabuffer
 	const end_load = performance.now()
 	const load_time = `${((end_load - end_count) / 1000).toFixed(3)}s`
 
+	let merge_Buffer = mergeBuffer(gaussianSplats.baseBuffer, gaussianSplats.extraBuffer);
+	// console.log(merge_Buffer); // true
+	let merge_count = gaussianSplats.extraVertexCount + gaussianSplats.baseVertexCount;
 	worker.postMessage({
-		buffer: gaussianSplats.extraBuffer,
-		vertexCount: gaussianSplats.extraVertexCount,
+		buffer: merge_Buffer,
+		vertexCount: merge_count,
 	})
 
 	const loadTime = `${((performance.now() - start) / 1000).toFixed(3)}s`
 	progressTextDom.innerHTML = ``;
 	reloadLod = false;
-	console.log(`[Loader] count ${gaussianSplats.extraVertexCount} gaussians in ${count_time}.`)
+	// console.log(`[Loader] count ${gaussianSplats.extraVertexCount} gaussians in ${count_time}.`)
 	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${load_time}.`)
-	console.log(`[Loader] total in ${loadTime}.`)
+	// console.log(`[Loader] total in ${loadTime}.`)
 	update_count = 0;
 }
 
@@ -2319,6 +2336,76 @@ async function readGaussianFromNode(node, gaussianSplats, campos, level) {
 	}
 }
 
+// read gaussian data from octree node List saved
+async function readGaussianFromNodeList(nodeList, gaussianSplats, campos) {
+	for (let idx = 0; idx < nodeList.length; idx++) {
+		if (nodeList[idx].visibility && nodeList[idx].loaded && !nodeList[idx].reading) {
+			//set reading flag
+			nodeList[idx].reading = true;
+			const currentCount = nodeList[idx].numPoints
+			for (let i = 0; i < currentCount; i++) {
+				// check buffer size
+				if (!isBufferLargeEnough(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3, 4)) return;
+				// read into buffer
+				const positions = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3);
+				const scales = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3, 3);
+				const rgbas = new Uint8ClampedArray(
+					gaussianSplats.extraBuffer,
+					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3,
+					4,
+				);
+				const rots = new Uint8ClampedArray(
+					gaussianSplats.extraBuffer,
+					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3 + 4,
+					4,
+				);
+
+				let { position, harmonic, opacity, scale, rotation } = nodeView(i, nodeList[idx])
+				// Normalize quaternion
+				let length2 = 0
+
+				for (let j = 0; j < 4; j++)
+					length2 += rotation[j] * rotation[j]
+
+				const length = Math.sqrt(length2)
+
+				rotation = rotation.map(v => (v / length) * 128 + 128)
+
+				rots[0] = rotation[0];
+				rots[1] = rotation[1];
+				rots[2] = rotation[2];
+				rots[3] = rotation[3];
+
+				// Exponentiate scale
+				scale = scale.map(v => Math.exp(v))
+
+				scales[0] = scale[0];
+				scales[1] = scale[1];
+				scales[2] = scale[2];
+
+				// const SH_C0 = 0.28209479177387814
+				// rgbas[0] = (0.5 + SH_C0 * harmonic[0]) * 255;
+				// rgbas[1] = (0.5 + SH_C0 * harmonic[1]) * 255;
+				// rgbas[2] = (0.5 + SH_C0 * harmonic[2]) * 255;
+
+				let color = computeColorFromSH(settings.shDegree, position, campos, harmonic)
+				rgbas[0] = color.x * 255;
+				rgbas[1] = color.y * 255;
+				rgbas[2] = color.z * 255;
+
+				// Activate alpha
+				const sigmoid = (m1) => 1 / (1 + Math.exp(-m1))
+				rgbas[3] = sigmoid(opacity) * 255;
+
+				positions[0] = position[0];
+				positions[1] = position[1];
+				positions[2] = position[2];
+
+				gaussianSplats.loadedCount++;
+			}
+		}
+	}
+}
 function markCubeVisibility(viewMatrix, projectionMatrix, node) {
 	// get 8 boundary points of the cube
 	const pmin = node.boundingBox.min;
