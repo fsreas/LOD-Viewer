@@ -185,9 +185,9 @@ async function fetchCameras() {
 
 let cameras;
 
-fetchCameras().then(fetchedCameras => {
-    cameras = fetchedCameras;
-});
+// fetchCameras().then(fetchedCameras => {
+//     cameras = fetchedCameras;
+// });
 
 let reloadLod = false;
 let update_count = 0;
@@ -1674,11 +1674,6 @@ async function main() {
 			lastViewProj[6] / lastViewProjNorm * viewProj[6] / viewProjNorm +
 			lastViewProj[10] / lastViewProjNorm * viewProj[10] / viewProjNorm;
 
-		// if (reloadDefault && settings.renderingMode == "Octree" && Math.abs(dot - 1) > 0.001) {
-		// 	stopReading = true;
-		// 	updateGaussianDefault(settings.lodLevel);
-		// 	reloadDefault = false;
-		// }
 
 		// if ((reloadLod || activeKeys.includes("ControlLeft")) && settings.renderingMode == "Octree" && Math.abs(dot - 1) > 0.001) {
 		if ((reloadLod || activeKeys.includes("ControlLeft")) && settings.renderingMode == "Octree" ) {
@@ -1995,7 +1990,7 @@ async function loadScene() {
 	octreeGeometryLoader = octreeGeometry.loader
 	await new Promise((resolve) => setTimeout(resolve, dataSource.initLoadTime));
 	// wait for the geometry to load
-	console.log('octreeGeometry', octreeGeometry)
+	console.log('INFO: octreeGeometry loading...')
 	settings.renderingMode = "Octree";
 
 	const queue = [{ node: octreeGeometry.root, level: 0 }];
@@ -2046,18 +2041,10 @@ const startLoadScene = (blob) => {
 	URL.revokeObjectURL(blob);
 }
 async function getFileData() {
-	// const localBlob = await localforage.getItem(`${dataSource.name}_0`);
-	// if (localBlob) {
-	// 	const mergedBlob = await mergeChunks();
-	// 	startLoadScene(mergedBlob)
-	// }
-	// else
-	 {
-		let data = await fetchSetFile(dataSource.octreeUrl)
-
-		const mergedBlob = await mergeChunks(data);
-		startLoadScene(mergedBlob)
-	}
+	let data = await fetchSetFile(dataSource.octreeUrl)
+	const mergedBlob = await mergeChunks(data);
+	startLoadScene(mergedBlob)
+	
 }
 async function fetchSetFile(url) {
 	const totalSize = await getTotalSize(url);
@@ -2076,6 +2063,8 @@ async function fetchSetFile(url) {
 
 		const promise = new Promise((resolve, reject) => {
 			xhr.onload = async () => {
+				// 当从客户端发送Range范围标头以只请求资源的一部分时，将使用此响应代码。
+				// 此处为读取一个chunk size的数据
 				if (xhr.status === 206) {
 					let blob = new Blob([xhr.response]);
 					let url = URL.createObjectURL(blob);
