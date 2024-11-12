@@ -2237,8 +2237,8 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	gaussianSplats.lastloadedCount = 0;
 
 	let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
-	await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0); // put something to extrabuffer
-	// await readGaussianFromNodeList(nodeList, gaussianSplats, campos); // put something to extrabuffer
+	// await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0); // put something to extrabuffer
+	await readGaussianFromNodeList(nodeList, gaussianSplats, campos); // put something to extrabuffer
 	const end_load = performance.now()
 	const load_time = `${((end_load - end_count) / 1000).toFixed(3)}s`
 
