@@ -65,7 +65,7 @@ export class NodeLoader {
 			let worker = workerPool.getWorker(workerPath);
 
 			worker.onmessage = function (e) {
-
+				// console.log("Now loader.worker")
 				let data = e.data;
 				let buffers = data.attributeBuffers;
 
