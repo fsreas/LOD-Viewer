@@ -692,6 +692,7 @@ function createWorker(self) {
 			starts0[i] = starts0[i - 1] + counts0[i - 1];
 		depthIndex = new Uint32Array(vertexCount);
 		for (let i = 0; i < vertexCount; i++)
+			// depthIndex[starts0[sizeList[i]]++] = i;
 			depthIndex[starts0[sizeList[i]]++] = i;
 
 		const sortTime = `${((performance.now() - start) / 1000).toFixed(3)}s`
@@ -923,21 +924,6 @@ function initGUI(resize) {
 			}
 		})
 
-		// gui.add(settings, 'poseId', 0, 1200, 5).name('Trajectory').listen()
-		// .onChange(async value => {
-		// 	try {
-		// 		stopReading = true;
-		// 		if (value > cameras.length - 1 ) value = cameras.length - 1;
-		// 		settings.poseId = value;
-
-		// 		viewMatrix = cameras[value].viewMatrix;
-				
-		// 		await updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, settings.maxGaussians)
-
-		// 	} catch (error) {
-		// 		throw error
-		// 	}
-		// })
 
     // 创建一个容器 div 用于放置加号、减号和计数显示
     const controlsContainer = document.createElement('div');
@@ -1141,7 +1127,7 @@ async function main() {
 
 	window.addEventListener("resize", resize);
 	resize();
-
+	let indexBufferSize = 0;
 	worker.onmessage = (e) => {
 		if (e.data.buffer) {
 			splatData = new Uint8Array(e.data.buffer);
@@ -1187,7 +1173,14 @@ async function main() {
 			// console.log('depthindex')
 			const { depthIndex, viewProj } = e.data;
 			gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
-			gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
+			// 使用 gl.bufferSubData 替代 gl.bufferData，提高更新效率
+			if (depthIndex.byteLength === indexBufferSize) {
+				gl.bufferSubData(gl.ARRAY_BUFFER, 0, depthIndex);
+			} else {
+				// 如果大小发生变化，重新分配缓冲区
+				gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
+				indexBufferSize = depthIndex.byteLength; // 更新缓冲区大小
+			}
 			vertexCount = e.data.vertexCount;
 			settings.sortTime = e.data.sortTime;
 		}
@@ -2064,80 +2057,6 @@ async function updateGaussianDefault() {
 	})
 }
 
-// async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxCount) {
-//     if (update_count > 1) return;
-//     update_count += 1;
-
-//     const start = performance.now();
-//     stopReading = false;
-//     gaussianSplats.extraVertexCount = 0;
-
-//     updateGaussianDefault();
-//     if (maxLevel === settings.baseLevel) { 
-//         update_count = 0;
-//         return; 
-//     }
-
-//     let ZDepthMax = settings.depthMax;
-//     const beta = Math.log(maxLevel + 1);
-//     let isOverMaxLimit = false;
-//     let loadingPromises = [];
-
-//     // 初始化主队列，用宽度优先
-//     let queue = baseLevelQueue.map(item => ({
-//         node: item.node,
-//         level: item.level,
-//         ...markCubeVisibility(viewMatrix, projectionMatrix, item.node),
-//     })).filter(item => item.visibility); // 初步过滤不可见节点
-
-//     while (queue.length > 0 && !isOverMaxLimit) {
-//         let { node, level, ZDepth, visibility } = queue.shift();
-        
-//         if (!visibility || node.reading || level > maxLevel) continue;
-//         node.reading = true;
-
-//         // 计算动态加载层级
-//         const actLevel = Math.floor(Math.min(
-//             Math.max((maxLevel + 1) * Math.exp(-beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), 
-//             maxLevel
-//         ));
-
-//         if (level >= actLevel) {
-//             // 加入加载任务
-//             loadingPromises.push(octreeGeometryLoader.load(node, octreeFileUrl).then(() => {
-//                 gaussianSplats.extraVertexCount += node.numPoints;
-//                 if (gaussianSplats.extraVertexCount > maxCount) isOverMaxLimit = true;
-//             }));
-//         }
-
-//         // 处理子节点，仅在当前层级小于 maxLevel 且未达最大加载限制时
-//         if (level < maxLevel && !isOverMaxLimit) {
-//             for (let cid = 0; cid < 8; cid++) {
-//                 const child = node.children[cid];
-//                 if (child) {
-//                     let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
-//                     if (visibility) queue.push({ node: child, level: level + 1, ZDepth, visibility });
-//                 }
-//             }
-//         }
-//     }
-
-//     // 等待所有加载任务完成
-//     await Promise.all(loadingPromises);
-    
-//     // 完成加载后更新点云缓冲区
-//     gaussianSplats.extraBuffer = new ArrayBuffer(gaussianSplats.rowLength * gaussianSplats.extraVertexCount);
-//     let campos = [viewMatrix[2], viewMatrix[6], viewMatrix[10]];
-//     await readGaussianFromNode(octreeGeometry.root, gaussianSplats, campos, 0);
-
-//     worker.postMessage({
-//         buffer: gaussianSplats.extraBuffer,
-//         vertexCount: gaussianSplats.extraVertexCount,
-//     });
-
-//     console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${(performance.now() - start) / 1000}s`);
-//     update_count = 0;
-// }
 function mergeBuffer(baseBuffer, extraBuffer) {
 	// 1. 创建一个新的缓冲区，大小为 baseBuffer 和 extraBuffer 的总和
 	let mergedBuffer = new ArrayBuffer(baseBuffer.byteLength + extraBuffer.byteLength);
