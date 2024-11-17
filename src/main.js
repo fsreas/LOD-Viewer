@@ -1054,7 +1054,8 @@ async function main() {
 	if (!gl.getProgramParameter(program, gl.LINK_STATUS))
 		console.error(gl.getProgramInfoLog(program));
 
-	gl.disable(gl.DEPTH_TEST); // Disable depth testing
+	// gl.disable(gl.DEPTH_TEST); // Disable depth testing
+	// gl.enable(gl.DEPTH_TEST);
 
 	// Enable blending
 	gl.enable(gl.BLEND);
