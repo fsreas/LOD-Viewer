@@ -657,7 +657,7 @@ function createWorker(self) {
 				lastProj[6] * viewProj[6] +
 				lastProj[10] * viewProj[10];
 			// if the new View is similar to previous one, then no need to re-sort
-			if (Math.abs(dot - 1) < 0.01) {
+			if (Math.abs(dot - 1) < 0.1) {
 				return;
 			}
 		} else {
@@ -698,7 +698,7 @@ function createWorker(self) {
 		const sortTime = `${((performance.now() - start) / 1000).toFixed(3)}s`
 
 		lastProj = viewProj;
-		
+		// depthIndex.reverse();
 		generateTexture();
 		self.postMessage({ depthIndex, viewProj, vertexCount, sortTime }, [
 			depthIndex.buffer,
@@ -819,6 +819,8 @@ void main () {
     float A = -dot(vPosition, vPosition);
     if (A < -4.0) discard;
     float B = exp(A) * vColor.a;
+
+	// fragColor = vec4(vPosition.z / vPosition.w, 0.0, 0.0, 1.0);
     fragColor = vec4(B * vColor.rgb, B);
 }
 
@@ -984,6 +986,7 @@ function initGUI(resize) {
     // 将容器和导出按钮添加到 GUI 中
     gui.domElement.appendChild(controlsContainer);
 	
+	//
 	let intervalId;
 	// 创建一个新的 div 元素来包含按钮
 	const div = document.createElement('div');
@@ -1004,7 +1007,6 @@ function initGUI(resize) {
 	// 将HTML元素添加到GUI界面中
 	const firstChildDiv = gui.domElement.querySelector('.children');
 	firstChildDiv.appendChild(div);
-	
 	firstChildDiv.appendChild(description);
 
 }
@@ -1056,7 +1058,7 @@ async function main() {
 
 	// gl.disable(gl.DEPTH_TEST); // Disable depth testing
 	// gl.enable(gl.DEPTH_TEST);
-
+	// gl.depthFunc(gl.LESS); // 确保近处的物体覆盖远处的
 	// Enable blending
 	gl.enable(gl.BLEND);
 	gl.blendFuncSeparate(
@@ -2082,6 +2084,10 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	updateGaussianDefault();
 	if (maxLevel === settings.baseLevel) { 
 		update_count = 0;
+		worker.postMessage({
+			buffer: gaussianSplats.baseBuffer,
+			vertexCount: gaussianSplats.baseVertexCount,
+		})
 		return; 
 	}
 
@@ -2174,7 +2180,7 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	progressTextDom.innerHTML = ``;
 	reloadLod = false;
 	// console.log(`[Loader] count ${gaussianSplats.extraVertexCount} gaussians in ${count_time}.`)
-	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${load_time}.`)
+	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${loadTime}.`)
 	// console.log(`[Loader] total in ${loadTime}.`)
 	update_count = 0;
 }
@@ -2346,10 +2352,10 @@ function markCubeVisibility(viewMatrix, projectionMatrix, node) {
 
 	if  (visibility) return { ZDepth, visibility };
 
-	for (let i = 0; i < 8; i++) {
-		const { ZDepth, visibility } = markPointVisibility(viewMatrix, projectionMatrix, points[i]);
-		if (visibility) return { ZDepth, visibility };
-	}
+	// for (let i = 0; i < 8; i++) {
+	// 	const { ZDepth, visibility } = markPointVisibility(viewMatrix, projectionMatrix, points[i]);
+	// 	if (visibility) return { ZDepth, visibility };
+	// }
 
 	return { ZDepth, visibility };
 }
@@ -2377,7 +2383,8 @@ function markPointVisibility(viewMatrix, projectionMatrix, centerPos) {
 
 	let visibility = false;
 	// Check if the point is within the camera's field of view
-	if (ZDepth > -3 && clipX > -1.5 && clipX < 1.5 && clipY > -1.5 && clipY < 1.5) {
+	// modified the visible depth to 1
+	if (ZDepth > -1 && clipX > -1.5 && clipX < 1.5 && clipY > -1.5 && clipY < 1.5) {
 		visibility = true;
 	}
 
