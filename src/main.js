@@ -1297,11 +1297,8 @@ async function main() {
 			inv = rotate4(inv, dx, 0, 1, 0);
 			inv = rotate4(inv, -dy, 1, 0, 0);
 			inv = translate4(inv, 0, 0, -d);
-			// let postAngle = Math.atan2(inv[0], inv[10])
-			// inv = rotate4(inv, postAngle - preAngle, 0, 0, 1)
-			// console.log(postAngle)
 			viewMatrix = invert4(inv);
-
+			// updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, settings.maxGaussians);
 			startX = e.clientX;
 			startY = e.clientY;
 		} else if (down == 2) {
@@ -1316,14 +1313,12 @@ async function main() {
 			);
 			// inv[13] = preY;
 			viewMatrix = invert4(inv);
-
+			// updateGaussianByView(viewMatrix, projectionMatrix, settings.lodLevel, settings.maxGaussians);
 			startX = e.clientX;
 			startY = e.clientY;
 		}
 	});
 	canvas.addEventListener("mouseup", (e) => {
-		// e.preventDefault();
-		// console.log(viewMatrix)
 		startReloadLod();
 		down = false;
 		startX = 0;
@@ -2383,8 +2378,8 @@ function markPointVisibility(viewMatrix, projectionMatrix, centerPos) {
 
 	let visibility = false;
 	// Check if the point is within the camera's field of view
-	// modified the visible depth to 1
-	if (ZDepth > -1 && clipX > -1.5 && clipX < 1.5 && clipY > -1.5 && clipY < 1.5) {
+	// modified the visible depth to 3
+	if (ZDepth > -3 && clipX > -1.5 && clipX < 1.5 && clipY > -1.5 && clipY < 1.5) {
 		visibility = true;
 	}
 
