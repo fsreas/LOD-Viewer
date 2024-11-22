@@ -524,6 +524,7 @@ function fov2focal(fov, length) {
 	return (length / 2) / Math.tan((fov * Math.PI) / 360);
 }
 
+
 function createWorker(self) {
 	let buffer;
 	let vertexCount = 0;
@@ -705,11 +706,110 @@ function createWorker(self) {
 		]);
 	}
 
+	async function runSortMultiThread(viewProj) {
+		if (!buffer) return; // 如果没有数据，直接返回
+		const f_buffer = new Float32Array(buffer);
+	
+		// 如果顶点数量没有改变，且视图矩阵变化较小，则不需要重新排序
+		if (lastVertexCount === vertexCount) {
+			let dot =
+				lastProj[2] * viewProj[2] +
+				lastProj[6] * viewProj[6] +
+				lastProj[10] * viewProj[10];
+			if (Math.abs(dot - 1) < 0.1) return; // 如果视图矩阵变化小于阈值，直接返回
+		} else {
+			lastVertexCount = vertexCount; // 更新顶点数量
+		}
+	
+		const start = performance.now();
+	
+		// 分块处理数据，减少主线程负担
+		const chunkSize = 100000; // 每个分块的大小
+		const chunks = [];
+		for (let i = 0; i < vertexCount; i += chunkSize) {
+			chunks.push(f_buffer.subarray(8 * i, 8 * Math.min(i + chunkSize, vertexCount)));
+		}
+	
+		// 创建 Web Worker 并发送任务
+		const workers = [];
+		const promises = [];
+		let globalMinDepth = Infinity;
+		let globalMaxDepth = -Infinity;
+		let depthLists = [];
+	
+		for (let i = 0; i < chunks.length; i++) {
+			const worker = new Worker(		
+				URL.createObjectURL(
+					new Blob([DepthWorkerSource], {
+						type: "application/javascript",
+					}),
+				),
+			);
+			workers.push(worker);
+	
+			promises.push(
+				new Promise((resolve) => {
+					worker.onmessage = function (event) {
+						const { minDepth, maxDepth, depthList, chunkIndex } = event.data;
+						globalMinDepth = Math.min(globalMinDepth, minDepth);
+						globalMaxDepth = Math.max(globalMaxDepth, maxDepth);
+						depthLists[chunkIndex] = depthList;
+						resolve(); // 当任务完成时 resolve
+					};
+				})
+			);
+	
+			worker.postMessage({ buffer: chunks[i].buffer, viewProj, chunkIndex: i });
+		}
+	
+		// 等待所有 worker 任务完成
+		await Promise.all(promises);
+	
+		// 合并深度列表
+		const mergedDepthList = depthLists.flat();
+		const depthInv = (256 * 256) / (globalMaxDepth - globalMinDepth);
+		const counts = new Uint32Array(256 * 256);
+		const sizeList = new Uint32Array(vertexCount);
+	
+		for (let i = 0; i < vertexCount; i++) {
+			sizeList[i] = ((mergedDepthList[i] - globalMinDepth) * depthInv) | 0;
+			counts[sizeList[i]]++;
+		}
+	
+		// 统计计数并生成排序索引
+		const starts = new Uint32Array(256 * 256);
+		for (let i = 1; i < 256 * 256; i++) {
+			starts[i] = starts[i - 1] + counts[i - 1];
+		}
+	
+		depthIndex = new Uint32Array(vertexCount);
+		for (let i = 0; i < vertexCount; i++) {
+			depthIndex[starts[sizeList[i]]++] = i;
+		}
+	
+		// 停止所有 Worker
+		workers.forEach((worker) => worker.terminate());
+	
+		const sortTime = `${((performance.now() - start) / 1000).toFixed(3)}s`;
+	
+		// 更新最后一次的视图矩阵
+		lastProj = viewProj;
+	
+		// 生成纹理并发送到主线程
+		generateTexture();
+		self.postMessage({ depthIndex, viewProj, vertexCount, sortTime }, [
+			depthIndex.buffer,
+		]);
+	
+	}
+
 	const throttledSort = () => {
 		if (!sortRunning) {
 			sortRunning = true;
 			let lastView = viewProj;
 			runSort(lastView);
+			// runSortMultiThread(lastView);
+
 			setTimeout(() => {
 				sortRunning = false;
 				if (lastView !== viewProj) {
@@ -726,6 +826,7 @@ function createWorker(self) {
 			// console.log("ply")
 			vertexCount = 0;
 			runSort(viewProj);
+			// runSortMultiThread(viewProj);
 			buffer = processPlyBuffer(e.data.ply);
 			vertexCount = Math.floor(buffer.byteLength / rowLength);
 			postMessage({ buffer: buffer });
@@ -838,7 +939,7 @@ let stopReading = false;
 let worker = null;
 let octreeGeometry, octreeGeometryLoader;
 const gaussianSplats = {}
-import { loadPointCloud } from "./potree.js"
+import { loadPointCloud } from "./potree.js";
 
 // Init settings GUI panel
 let videoPlay = false;
@@ -1326,91 +1427,105 @@ async function main() {
 
 	});
 
-	let startDistance = 0;
-	canvas.addEventListener(
-		"touchstart",
-		(e) => {
-			e.preventDefault();
-			if (e.touches.length === 1) {
-				// 单指触摸时，进行旋转或拖拽
-				carousel = false;
-				startX = e.touches[0].clientX;
-				startY = e.touches[0].clientY;
-				down = 1;
-			} else if (e.touches.length === 2) {
-				// 双指触摸时，开始缩放
-				carousel = false;
-				startX = e.touches[0].clientX;
-				altX = e.touches[1].clientX;
-				startY = e.touches[0].clientY;
-				altY = e.touches[1].clientY;
-				down = 2;
-	
-				// 计算初始触摸距离
-				startDistance = Math.hypot(
-					e.touches[0].clientX - e.touches[1].clientX,
-					e.touches[0].clientY - e.touches[1].clientY
-				);
-			}
-		},
-		{ passive: false },
-	);
-	
-	canvas.addEventListener(
-		"touchmove",
-		(e) => {
-			e.preventDefault();
-			if (e.touches.length === 1 && down === 1) {
-				// 单指移动时，旋转或拖拽
-				let inv = invert4(viewMatrix);
-				let dx = (4 * (e.touches[0].clientX - startX)) / innerWidth;
-				let dy = (4 * (e.touches[0].clientY - startY)) / innerHeight;
-				let d = 4;
-	
-				inv = translate4(inv, 0, 0, d);
-				inv = rotate4(inv, dx, 0, 1, 0);
-				inv = rotate4(inv, -dy, 1, 0, 0);
-				inv = translate4(inv, 0, 0, -d);
-				viewMatrix = invert4(inv);
-	
-				startX = e.touches[0].clientX;
-				startY = e.touches[0].clientY;
-			} else if (e.touches.length === 2 && down === 2) {
-				// 双指缩放
-				const currentDistance = Math.hypot(
-					e.touches[0].clientX - e.touches[1].clientX,
-					e.touches[0].clientY - e.touches[1].clientY
-				);
-	
-				// 缩放比例
-				const scale = currentDistance / startDistance;
-	
-				let inv = invert4(viewMatrix);
-	
-				// 计算缩放：乘以缩放比例
-				inv = translate4(inv, 0, 0, 3 * (1 - scale));
-				viewMatrix = invert4(inv);
-	
-				// 更新起始距离为新的距离
-				startDistance = currentDistance;
-			}
-		},
-		{ passive: false },
-	);
-	
-	canvas.addEventListener(
-		"touchend",
-		(e) => {
-			e.preventDefault();
-			startReloadLod();
-			down = false;
-			startX = 0;
-			startY = 0;
-		},
-		{ passive: false },
-	);
-	
+    let altX = 0,
+        altY = 0;
+    canvas.addEventListener(
+        "touchstart",
+        (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                carousel = false;
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+                down = 1;
+            } else if (e.touches.length === 2) {
+                // console.log('beep')
+                carousel = false;
+                startX = e.touches[0].clientX;
+                altX = e.touches[1].clientX;
+                startY = e.touches[0].clientY;
+                altY = e.touches[1].clientY;
+                down = 1;
+            }
+        },
+        { passive: false },
+    );
+    canvas.addEventListener(
+        "touchmove",
+        (e) => {
+            e.preventDefault();
+            if (e.touches.length === 1 && down) {
+                let inv = invert4(viewMatrix);
+                let dx = (4 * (e.touches[0].clientX - startX)) / innerWidth;
+                let dy = (4 * (e.touches[0].clientY - startY)) / innerHeight;
 
+                let d = 4;
+                inv = translate4(inv, 0, 0, d);
+                // inv = translate4(inv,  -x, -y, -z);
+                // inv = translate4(inv,  x, y, z);
+                inv = rotate4(inv, dx, 0, 1, 0);
+                inv = rotate4(inv, -dy, 1, 0, 0);
+                inv = translate4(inv, 0, 0, -d);
+
+                viewMatrix = invert4(inv);
+
+                startX = e.touches[0].clientX;
+                startY = e.touches[0].clientY;
+            } else if (e.touches.length === 2) {
+                // alert('beep')
+                const dtheta =
+                    Math.atan2(startY - altY, startX - altX) -
+                    Math.atan2(
+                        e.touches[0].clientY - e.touches[1].clientY,
+                        e.touches[0].clientX - e.touches[1].clientX,
+                    );
+                const dscale =
+                    Math.hypot(startX - altX, startY - altY) /
+                    Math.hypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY,
+                    );
+                const dx =
+                    (e.touches[0].clientX +
+                        e.touches[1].clientX -
+                        (startX + altX)) /
+                    2;
+                const dy =
+                    (e.touches[0].clientY +
+                        e.touches[1].clientY -
+                        (startY + altY)) /
+                    2;
+                let inv = invert4(viewMatrix);
+                // inv = translate4(inv,  0, 0, d);
+                inv = rotate4(inv, dtheta, 0, 0, 1);
+
+                inv = translate4(inv, -dx / innerWidth, -dy / innerHeight, 0);
+
+                // let preY = inv[13];
+                inv = translate4(inv, 0, 0, 3 * (1 - dscale));
+                // inv[13] = preY;
+
+                viewMatrix = invert4(inv);
+
+                startX = e.touches[0].clientX;
+                altX = e.touches[1].clientX;
+                startY = e.touches[0].clientY;
+                altY = e.touches[1].clientY;
+            }
+        },
+        { passive: false },
+    );
+    canvas.addEventListener(
+        "touchend",
+        (e) => {
+            e.preventDefault();
+            down = false;
+            startX = 0;
+            startY = 0;
+        },
+        { passive: false },
+    );
+	
 	let jumpDelta = 0;
 	let vertexCount = 0;
 
@@ -2181,7 +2296,6 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 }
 
 
-// read gaussian data from octree node
 async function readGaussianFromNode(node, gaussianSplats, campos, level) {
 	if (node.visibility && node.loaded && !node.reading) {
 		//set reading flag
