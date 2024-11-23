@@ -2204,13 +2204,15 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	let ZDepthMax = settings.depthMax;
 	let nodeList = [];
 	let isOverMaxLimit = false;
+	const maxConcurrentLoads = 16; // 最大并行加载数
+	const taskQueue = []; // 存储待处理任务的队列
+	
 	for (let base_index = 0; base_index < baseLevelQueue.length; base_index++) {
-		// console.log(baseLevelQueue[base_index].node);
 		let queue = [];
-		
-		let {ZDepth, visibility} = markCubeVisibility(viewMatrix, projectionMatrix, baseLevelQueue[base_index].node);
+	
+		let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, baseLevelQueue[base_index].node);
 		queue.push({ node: baseLevelQueue[base_index].node, level: baseLevelQueue[base_index].level, ZDepth: ZDepth, visibility: visibility });
-
+		
 		if (!visibility) {
 			queue.pop();
 		}
@@ -2218,57 +2220,80 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 		if (queue.length > 0 && isOverMaxLimit) {
 			const { node, level, ZDepth, visibility } = queue.shift();
 			node.visibility = visibility;
-			if(!node.geometry) {
-				await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
-			}
+			taskQueue.push(async () => {
+				if (!node.geometry) {
+					await octreeGeometryLoader.load(node, octreeFileUrl);
+					// console.log(`load ${node.numPoints} completed!`) // 加载点云
+				}
+			});
 			gaussianSplats.extraVertexCount += node.numPoints;
 			nodeList.push(node);
 		}
 		
-		//first loop
 		while (queue.length > 0 && !isOverMaxLimit) {
 			const { node, level, ZDepth, visibility } = queue.shift();
 			node.reading = false;
 
-			if (level <= maxLevel) { // reduce some level to avoid too many children
-				// set the children of the current node
-
-				{
-					const beta = Math.log(maxLevel + 1)
-					const actLevel = Math.floor(Math.min(Math.max((maxLevel + 1) * Math.exp(-1.0 * beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), maxLevel));
-					// console.log(actLevel, level, visibility)
-					node.visibility = level >= actLevel ? visibility : false;
-				}
-
+			if (level <= maxLevel) {
+				const beta = Math.log(maxLevel + 1);
+				const actLevel = Math.floor(Math.min(Math.max((maxLevel + 1) * Math.exp(-1.0 * beta * Math.abs(ZDepth) / ZDepthMax), settings.baseLevel), maxLevel));
+				node.visibility = level >= actLevel ? visibility : false;
+	
 				if (node.visibility && !node.reading) {
-					if(!node.geometry) {
-						await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
-					}
+					// 将加载任务加入任务队列
+					taskQueue.push(async () => {
+						if (!node.geometry) {
+							await octreeGeometryLoader.load(node, octreeFileUrl);
+							// console.log(`load ${node.numPoints} completed!`) // 加载点云
+						}
+					});
+
 					gaussianSplats.extraVertexCount += node.numPoints;
 					nodeList.push(node);
+
+					// 检查是否达到加载限制
 					if (gaussianSplats.extraVertexCount > maxCount) {
 						isOverMaxLimit = true;
-						// console.log("Stop Reading Gaussian Geometry!", gaussianSplats.extraVertexCount, maxCount)
 						break;
 					}
-
-				} else {
-					if (level < maxLevel) {
-						for (let cid = 0; cid < 8; cid++) {
-							const child = node.children[cid];
-							if (child) {
-								let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
-								if (visibility) {
-									queue.push({ node: child, level: level + 1, ZDepth: ZDepth, visibility: visibility });
-								}
+				} else if (level < maxLevel) {
+				// 添加子节点到队列		
+					for (let cid = 0; cid < 8; cid++) {
+						const child = node.children[cid];
+						if (child) {
+							let { ZDepth, visibility } = markCubeVisibility(viewMatrix, projectionMatrix, child);
+							if (visibility) {
+								queue.push({ node: child, level: level + 1, ZDepth: ZDepth, visibility: visibility });
 							}
 						}
 					}
-
 				}
 			}
 		}
 	}
+	
+	// 批量执行任务队列中的任务，控制并行加载的数量
+	async function executeTaskQueue(taskQueue, maxConcurrentLoads) {
+		const taskPromises = [];
+		for (const task of taskQueue) {
+			const taskPromise = task().catch(err => {
+				console.error("Error loading node geometry:", err);
+			});
+			taskPromises.push(taskPromise);
+	
+			if (taskPromises.length >= maxConcurrentLoads) {
+				// 等待当前并行任务完成后再启动新的任务
+				await Promise.race(taskPromises);
+				taskPromises.splice(taskPromises.findIndex(p => p.isResolved), 1); // 移除已完成的任务
+			}
+		}
+		// 等待所有任务完成
+		await Promise.all(taskPromises);
+	}
+	
+	// 执行任务队列
+	await executeTaskQueue(taskQueue, maxConcurrentLoads);
+
 	const end_count = performance.now();
 	const count_time = `${((end_count - start) / 1000).toFixed(3)}s`
 	// Send gaussian data to the worker
@@ -2378,77 +2403,156 @@ async function readGaussianFromNode(node, gaussianSplats, campos, level) {
 	}
 }
 
-// read gaussian data from octree node List saved
+// // read gaussian data from octree node List saved
+// async function readGaussianFromNodeList(nodeList, gaussianSplats, campos) {
+// 	gaussianSplats.loadedCount = 0;
+// 	for (let idx = 0; idx < nodeList.length; idx++) {
+// 		if (nodeList[idx].visibility && nodeList[idx].loaded && !nodeList[idx].reading) {
+// 			//set reading flag
+// 			nodeList[idx].reading = true;
+// 			const currentCount = nodeList[idx].numPoints
+// 			for (let i = 0; i < currentCount; i++) {
+// 				// check buffer size
+// 				if (!isBufferLargeEnough(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3, 4)) return;
+// 				// read into buffer
+// 				const positions = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3);
+// 				const scales = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3, 3);
+// 				const rgbas = new Uint8ClampedArray(
+// 					gaussianSplats.extraBuffer,
+// 					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3,
+// 					4,
+// 				);
+// 				const rots = new Uint8ClampedArray(
+// 					gaussianSplats.extraBuffer,
+// 					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3 + 4,
+// 					4,
+// 				);
+
+// 				let { position, harmonic, opacity, scale, rotation } = nodeView(i, nodeList[idx])
+// 				// Normalize quaternion
+// 				let length2 = 0
+
+// 				for (let j = 0; j < 4; j++)
+// 					length2 += rotation[j] * rotation[j]
+
+// 				const length = Math.sqrt(length2)
+
+// 				rotation = rotation.map(v => (v / length) * 128 + 128)
+
+// 				rots[0] = rotation[0];
+// 				rots[1] = rotation[1];
+// 				rots[2] = rotation[2];
+// 				rots[3] = rotation[3];
+
+// 				// Exponentiate scale
+// 				scale = scale.map(v => Math.exp(v))
+
+// 				scales[0] = scale[0];
+// 				scales[1] = scale[1];
+// 				scales[2] = scale[2];
+
+// 				// const SH_C0 = 0.28209479177387814
+// 				// rgbas[0] = (0.5 + SH_C0 * harmonic[0]) * 255;
+// 				// rgbas[1] = (0.5 + SH_C0 * harmonic[1]) * 255;
+// 				// rgbas[2] = (0.5 + SH_C0 * harmonic[2]) * 255;
+
+// 				let color = computeColorFromSH(settings.shDegree, position, campos, harmonic)
+// 				rgbas[0] = color.x * 255;
+// 				rgbas[1] = color.y * 255;
+// 				rgbas[2] = color.z * 255;
+
+// 				// Activate alpha
+// 				const sigmoid = (m1) => 1 / (1 + Math.exp(-m1))
+// 				rgbas[3] = sigmoid(opacity) * 255;
+
+// 				positions[0] = position[0];
+// 				positions[1] = position[1];
+// 				positions[2] = position[2];
+
+// 				gaussianSplats.loadedCount++;
+// 			}
+// 		}
+// 	}
+// }
 async function readGaussianFromNodeList(nodeList, gaussianSplats, campos) {
-	gaussianSplats.loadedCount = 0;
-	for (let idx = 0; idx < nodeList.length; idx++) {
-		if (nodeList[idx].visibility && nodeList[idx].loaded && !nodeList[idx].reading) {
-			//set reading flag
-			nodeList[idx].reading = true;
-			const currentCount = nodeList[idx].numPoints
-			for (let i = 0; i < currentCount; i++) {
-				// check buffer size
-				if (!isBufferLargeEnough(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3, 4)) return;
-				// read into buffer
-				const positions = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3);
-				const scales = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3, 3);
-				const rgbas = new Uint8ClampedArray(
-					gaussianSplats.extraBuffer,
-					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3,
-					4,
-				);
-				const rots = new Uint8ClampedArray(
-					gaussianSplats.extraBuffer,
-					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3 + 4,
-					4,
-				);
+    gaussianSplats.loadedCount = 0;
 
-				let { position, harmonic, opacity, scale, rotation } = nodeView(i, nodeList[idx])
-				// Normalize quaternion
-				let length2 = 0
+    // 处理每个节点的异步任务
+    const processNode = async (node) => {
+        if (node.visibility && node.loaded && !node.reading) {
+            node.reading = true;
+            const currentCount = node.numPoints;
 
-				for (let j = 0; j < 4; j++)
-					length2 += rotation[j] * rotation[j]
+            for (let i = 0; i < currentCount; i++) {
+                // 检查缓冲区大小
+                if (!isBufferLargeEnough(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3, 4)) return;
 
-				const length = Math.sqrt(length2)
+                // 获取当前点的数据
+                const positions = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3);
+                const scales = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3, 3);
+                const rgbas = new Uint8ClampedArray(
+                    gaussianSplats.extraBuffer,
+                    gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3,
+                    4,
+                );
+                const rots = new Uint8ClampedArray(
+                    gaussianSplats.extraBuffer,
+                    gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3 + 4,
+                    4,
+                );
 
-				rotation = rotation.map(v => (v / length) * 128 + 128)
+                // 获取点的数据
+                let { position, harmonic, opacity, scale, rotation } = nodeView(i, node);
 
-				rots[0] = rotation[0];
-				rots[1] = rotation[1];
-				rots[2] = rotation[2];
-				rots[3] = rotation[3];
+                // 归一化四元数
+                let length2 = 0;
+                for (let j = 0; j < 4; j++) length2 += rotation[j] * rotation[j];
+                const length = Math.sqrt(length2);
+                rotation = rotation.map(v => (v / length) * 128 + 128);
 
-				// Exponentiate scale
-				scale = scale.map(v => Math.exp(v))
+                // 将归一化后的四元数写入 rots
+                rots[0] = rotation[0];
+                rots[1] = rotation[1];
+                rots[2] = rotation[2];
+                rots[3] = rotation[3];
 
-				scales[0] = scale[0];
-				scales[1] = scale[1];
-				scales[2] = scale[2];
+                // 指数化缩放因子
+                scale = scale.map(v => Math.exp(v));
 
-				// const SH_C0 = 0.28209479177387814
-				// rgbas[0] = (0.5 + SH_C0 * harmonic[0]) * 255;
-				// rgbas[1] = (0.5 + SH_C0 * harmonic[1]) * 255;
-				// rgbas[2] = (0.5 + SH_C0 * harmonic[2]) * 255;
+                // 将缩放因子写入 scales
+                scales[0] = scale[0];
+                scales[1] = scale[1];
+                scales[2] = scale[2];
 
-				let color = computeColorFromSH(settings.shDegree, position, campos, harmonic)
-				rgbas[0] = color.x * 255;
-				rgbas[1] = color.y * 255;
-				rgbas[2] = color.z * 255;
+                // 计算颜色
+                let color = computeColorFromSH(settings.shDegree, position, campos, harmonic);
+                rgbas[0] = color.x * 255;
+                rgbas[1] = color.y * 255;
+                rgbas[2] = color.z * 255;
 
-				// Activate alpha
-				const sigmoid = (m1) => 1 / (1 + Math.exp(-m1))
-				rgbas[3] = sigmoid(opacity) * 255;
+                // 使用 Sigmoid 函数计算透明度
+                const sigmoid = (m1) => 1 / (1 + Math.exp(-m1));
+                rgbas[3] = sigmoid(opacity) * 255;
 
-				positions[0] = position[0];
-				positions[1] = position[1];
-				positions[2] = position[2];
+                // 写入位置
+                positions[0] = position[0];
+                positions[1] = position[1];
+                positions[2] = position[2];
 
-				gaussianSplats.loadedCount++;
-			}
-		}
-	}
+                // 更新计数器
+                gaussianSplats.loadedCount++;
+            }
+        }
+    };
+
+    // 创建一个数组来保存所有的异步任务
+    const processTasks = nodeList.map(processNode);
+
+    // 等待所有的任务完成
+    await Promise.all(processTasks);
 }
+
+
 function markCubeVisibility(viewMatrix, projectionMatrix, node) {
 	// get 8 boundary points of the cube
 	const pmin = node.boundingBox.min;
