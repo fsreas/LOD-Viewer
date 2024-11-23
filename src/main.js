@@ -2218,7 +2218,9 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 		if (queue.length > 0 && isOverMaxLimit) {
 			const { node, level, ZDepth, visibility } = queue.shift();
 			node.visibility = visibility;
-			await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
+			if(!node.geometry) {
+				await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
+			}
 			gaussianSplats.extraVertexCount += node.numPoints;
 			nodeList.push(node);
 		}
@@ -2239,7 +2241,9 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 				}
 
 				if (node.visibility && !node.reading) {
-					await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
+					if(!node.geometry) {
+						await octreeGeometryLoader.load(node, octreeFileUrl); // load gau point cloud
+					}
 					gaussianSplats.extraVertexCount += node.numPoints;
 					nodeList.push(node);
 					if (gaussianSplats.extraVertexCount > maxCount) {
@@ -2279,21 +2283,23 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	const load_time = `${((end_load - end_count) / 1000).toFixed(3)}s`
 
 	let merge_Buffer = mergeBuffer(gaussianSplats.baseBuffer, gaussianSplats.extraBuffer);
-	gaussianSplats.extraBuffer = null;
+	
 	// console.log(merge_Buffer); // true
 	let merge_count = gaussianSplats.extraVertexCount + gaussianSplats.baseVertexCount;
 	worker.postMessage({
 		buffer: merge_Buffer,
 		vertexCount: merge_count,
 	})
-
-	const loadTime = `${((performance.now() - start) / 1000).toFixed(3)}s`
+	const total_time = `${((performance.now() - start) / 1000).toFixed(3)}s`
 	progressTextDom.innerHTML = ``;
 	reloadLod = false;
-	// console.log(`[Loader] count ${gaussianSplats.extraVertexCount} gaussians in ${count_time}.`)
-	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${loadTime}.`)
-	// console.log(`[Loader] total in ${loadTime}.`)
+	console.log(`[Loader] count ${gaussianSplats.extraVertexCount} gaussians in ${count_time}.`)
+	console.log(`[Loader] load ${gaussianSplats.extraVertexCount} gaussians in ${load_time}.`)
+	console.log(`[Loader] total in ${total_time}.`)
 	update_count = 0;
+	gaussianSplats.extraVertexCount = 0;
+	gaussianSplats.extraBuffer = null;
+
 }
 
 
@@ -2374,6 +2380,7 @@ async function readGaussianFromNode(node, gaussianSplats, campos, level) {
 
 // read gaussian data from octree node List saved
 async function readGaussianFromNodeList(nodeList, gaussianSplats, campos) {
+	gaussianSplats.loadedCount = 0;
 	for (let idx = 0; idx < nodeList.length; idx++) {
 		if (nodeList[idx].visibility && nodeList[idx].loaded && !nodeList[idx].reading) {
 			//set reading flag
