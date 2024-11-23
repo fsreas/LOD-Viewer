@@ -1525,7 +1525,7 @@ async function main() {
         },
         { passive: false },
     );
-	
+
 	let jumpDelta = 0;
 	let vertexCount = 0;
 
@@ -2279,6 +2279,7 @@ async function updateGaussianByView(viewMatrix, projectionMatrix, maxLevel, maxC
 	const load_time = `${((end_load - end_count) / 1000).toFixed(3)}s`
 
 	let merge_Buffer = mergeBuffer(gaussianSplats.baseBuffer, gaussianSplats.extraBuffer);
+	gaussianSplats.extraBuffer = null;
 	// console.log(merge_Buffer); // true
 	let merge_count = gaussianSplats.extraVertexCount + gaussianSplats.baseVertexCount;
 	worker.postMessage({
