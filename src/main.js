@@ -2071,60 +2071,140 @@ async function getFileData() {
 	startLoadScene(mergedBlob)
 	
 }
+// async function fetchSetFile(url) {
+// 	const totalSize = await getTotalSize(url);
+// 	const chunkCount = Math.ceil(totalSize / chunkSize);
+// 	let chunks = []
+// 	let totalLoaded = 0; // Track the total bytes loaded
+
+// 	for (let i = 0; i < chunkCount; i++) {
+// 		const start = i * chunkSize;
+// 		const end = Math.min(totalSize, (i + 1) * chunkSize) - 1;
+
+// 		const xhr = new XMLHttpRequest();
+// 		xhr.open('GET', url);
+// 		xhr.setRequestHeader('Range', `bytes=${start}-${end}`);
+// 		xhr.responseType = 'arraybuffer';
+
+// 		const promise = new Promise((resolve, reject) => {
+// 			xhr.onload = async () => {
+// 				// 当从客户端发送Range范围标头以只请求资源的一部分时，将使用此响应代码。
+// 				// 此处为读取一个chunk size的数据
+// 				if (xhr.status === 206) {
+// 					let blob = new Blob([xhr.response]);
+// 					let url = URL.createObjectURL(blob);
+// 					// await storeChunkInIndexedDB(blob, i);
+// 					resolve(blob);
+// 				} else {
+// 					reject(new Error(`Failed to fetch chunk: ${xhr.statusText}`));
+// 				}
+// 			};
+// 			xhr.onerror = () => {
+// 				reject(new Error('Failed to fetch chunk: Network error'));
+// 			};
+// 		});
+// 		// 
+// 		xhr.addEventListener('progress', function (event) {
+// 			if (event.lengthComputable) {
+// 				// const progress = Math.round((totalLoaded / event.total) * 100);
+// 				const progress = Math.round((i / chunkCount) * 100);
+// 				totalLoaded = Math.max(totalLoaded, progress);
+// 				progressBarDom.style.width = `${totalLoaded}%`;
+// 				// progressTextDom.innerHTML = `Load Chunk ${i} Resources ${(dataSource.size * progress / 100).toFixed(2)}MB`;
+// 				progressTextDom.innerHTML = `Load Resources ${(dataSource.size * totalLoaded / 100).toFixed(2)}MB`;
+// 				if (progress === 100) {
+// 					progressTextDom.innerText = `File Loaded Successfully, Parsing...`;
+// 				}
+// 			} else {
+// 				console.log('Download progress: Not computable');
+// 			}
+// 		});
+
+// 		xhr.send();
+// 		chunks.push(promise);
+// 	}
+
+// 	return Promise.all(chunks);
+// }
 async function fetchSetFile(url) {
-	const totalSize = await getTotalSize(url);
-	const chunkCount = Math.ceil(totalSize / chunkSize);
-	let chunks = []
-	let totalLoaded = 0; // Track the total bytes loaded
+    const totalSize = await getTotalSize(url);
+    const chunkCount = Math.ceil(totalSize / chunkSize);
+    const maxConcurrency = 4; // 设置最大并发数
+    let activeTasks = 0; // 当前活动任务数
+    let totalLoaded = 0; // 跟踪加载进度
 
-	for (let i = 0; i < chunkCount; i++) {
-		const start = i * chunkSize;
-		const end = Math.min(totalSize, (i + 1) * chunkSize) - 1;
+    // 创建一个数组来存储每个chunk的加载进度
+    const chunkProgress = new Array(chunkCount).fill(0); 
 
-		const xhr = new XMLHttpRequest();
-		xhr.open('GET', url);
-		xhr.setRequestHeader('Range', `bytes=${start}-${end}`);
-		xhr.responseType = 'arraybuffer';
+    // 创建一个任务
+    const createTask = (start, end, index) => {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url);
+            xhr.setRequestHeader('Range', `bytes=${start}-${end}`);
+            xhr.responseType = 'arraybuffer';
 
-		const promise = new Promise((resolve, reject) => {
-			xhr.onload = async () => {
-				// 当从客户端发送Range范围标头以只请求资源的一部分时，将使用此响应代码。
-				// 此处为读取一个chunk size的数据
-				if (xhr.status === 206) {
-					let blob = new Blob([xhr.response]);
-					let url = URL.createObjectURL(blob);
-					// await storeChunkInIndexedDB(blob, i);
-					resolve(blob);
-				} else {
-					reject(new Error(`Failed to fetch chunk: ${xhr.statusText}`));
-				}
-			};
-			xhr.onerror = () => {
-				reject(new Error('Failed to fetch chunk: Network error'));
-			};
-		});
-		// 
-		xhr.addEventListener('progress', function (event) {
-			if (event.lengthComputable) {
-				// const progress = Math.round((totalLoaded / event.total) * 100);
-				const progress = Math.round((i / chunkCount) * 100);
-				totalLoaded = Math.max(totalLoaded, progress);
-				progressBarDom.style.width = `${totalLoaded}%`;
-				// progressTextDom.innerHTML = `Load Chunk ${i} Resources ${(dataSource.size * progress / 100).toFixed(2)}MB`;
-				progressTextDom.innerHTML = `Load Resources ${(dataSource.size * totalLoaded / 100).toFixed(2)}MB`;
-				if (progress === 100) {
-					progressTextDom.innerText = `File Loaded Successfully, Parsing...`;
-				}
-			} else {
-				console.log('Download progress: Not computable');
-			}
-		});
+            xhr.onload = () => {
+                if (xhr.status === 206) {
+                    const blob = new Blob([xhr.response]);
+                    resolve(blob);
+                } else {
+                    reject(new Error(`Failed to fetch chunk: ${xhr.statusText}`));
+                }
+            };
 
-		xhr.send();
-		chunks.push(promise);
-	}
+            xhr.onerror = () => reject(new Error('Failed to fetch chunk: Network error'));
 
-	return Promise.all(chunks);
+            xhr.addEventListener('progress', (event) => {
+                if (event.lengthComputable) {
+                    // 更新当前 chunk 的进度
+                    chunkProgress[index] = event.loaded; 
+
+                    // 计算并更新总的加载进度
+                    const totalLoaded = chunkProgress.reduce((sum, loaded) => sum + loaded, 0);
+                    const progress = Math.round((totalLoaded / totalSize) * 100);
+
+                    // 更新进度条和文本显示
+                    progressBarDom.style.width = `${progress}%`;
+                    progressTextDom.innerHTML = `Loading ${(totalLoaded / 1e6).toFixed(2)} MB`;
+                }
+            });
+
+            xhr.send();
+        });
+    };
+
+    // 并发限制逻辑
+    async function runTaskQueue() {
+        const results = [];
+        for (let i = 0; i < chunkCount; i++) {
+            const start = i * chunkSize;
+            const end = Math.min(totalSize, (i + 1) * chunkSize) - 1;
+
+            while (activeTasks >= maxConcurrency) {
+                // 如果达到最大并发限制，则等待
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
+
+            activeTasks++; // 增加活动任务计数
+
+            const task = createTask(start, end, i)
+                .then(result => {
+                    activeTasks--; // 任务完成后减少活动任务计数
+                    return result;
+                })
+                .catch(error => {
+                    activeTasks--;
+                    console.error(error);
+                });
+
+            results.push(task);
+        }
+
+        return Promise.all(results);
+    }
+
+    return runTaskQueue();
 }
 
 async function getTotalSize(url) {
