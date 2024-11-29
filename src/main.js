@@ -2019,6 +2019,7 @@ async function loadScene() {
 	settings.renderingMode = "Octree";
 
 	const queue = [{ node: octreeGeometry.root, level: 0 }];
+	// console.log(octreeGeometry)
 	while (queue.length > 0) {
 		const { node, level } = queue.shift();
 		if (level <= settings.baseLevel) {

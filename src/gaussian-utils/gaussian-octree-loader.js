@@ -352,7 +352,7 @@ export class OctreeLoader {
 		let metadata = await response.json();
 
 		let attributes = OctreeLoader.parseAttributes(metadata.attributes);
-
+		
 		let loader = new NodeLoader(url);
 		loader.metadata = metadata;
 		loader.attributes = attributes;
