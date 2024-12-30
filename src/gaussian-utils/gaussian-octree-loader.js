@@ -61,80 +61,78 @@ export class NodeLoader {
 
 			let worker = workerPool.getWorker(workerPath);
 
-			worker.onmessage = function (e) {
-				// console.log("Now loader.worker")
-				let data = e.data;
-				let buffers = data.attributeBuffers;
-
-				workerPool.returnWorker(workerPath, worker);
-
-				let geometry = new THREE.BufferGeometry();
-
-				for (let property in buffers) {
-
-					let buffer = buffers[property].buffer;
-
-					if (property === "position") {
-						geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buffer), 3));
-					} else if (property === "rgba") {
-						geometry.setAttribute('rgba', new THREE.BufferAttribute(new Uint8Array(buffer), 4, true));
-					} else if (property === "NORMAL") {
-						//geometry.setAttribute('rgba', new THREE.BufferAttribute(new Uint8Array(buffer), 4, true));
-						geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(buffer), 3));
-					} else if (property === "INDICES") {
-						let bufferAttribute = new THREE.BufferAttribute(new Uint8Array(buffer), 4);
-						bufferAttribute.normalized = true;
-						geometry.setAttribute('indices', bufferAttribute);
-					} else {
-						const bufferAttribute = new THREE.BufferAttribute(new Float32Array(buffer), 1);
-
-						let batchAttribute = buffers[property].attribute;
-						bufferAttribute.potree = {
-							offset: buffers[property].offset,
-							scale: buffers[property].scale,
-							preciseBuffer: buffers[property].preciseBuffer,
-							range: batchAttribute.range,
-						};
-
-						geometry.setAttribute(property, bufferAttribute);
+			return new Promise((resolve, reject) => {
+				worker.onmessage = function (e) {
+					let data = e.data;
+					let buffers = data.attributeBuffers;
+	
+					workerPool.returnWorker(workerPath, worker);
+	
+					let geometry = new THREE.BufferGeometry();
+					for (let property in buffers) {
+						let buffer = buffers[property].buffer;
+						if (property === "position") {
+							geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buffer), 3));
+						} else if (property === "rgba") {
+							geometry.setAttribute('rgba', new THREE.BufferAttribute(new Uint8Array(buffer), 4, true));
+						} else if (property === "NORMAL") {
+							geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(buffer), 3));
+						} else if (property === "INDICES") {
+							let bufferAttribute = new THREE.BufferAttribute(new Uint8Array(buffer), 4);
+							bufferAttribute.normalized = true;
+							geometry.setAttribute('indices', bufferAttribute);
+						} else {
+							const bufferAttribute = new THREE.BufferAttribute(new Float32Array(buffer), 1);
+							let batchAttribute = buffers[property].attribute;
+							bufferAttribute.potree = {
+								offset: buffers[property].offset,
+								scale: buffers[property].scale,
+								preciseBuffer: buffers[property].preciseBuffer,
+								range: batchAttribute.range,
+							};
+							geometry.setAttribute(property, bufferAttribute);
+						}
 					}
-
-				}
-				// indices ??
-
-				node.density = data.density;
-				node.geometry = geometry;
-				node.loaded = true;
-				node.loading = false;
-				potree.numNodesLoading--;
-			};
-
-			let pointAttributes = node.octreeGeometry.pointAttributes;
-			let scale = node.octreeGeometry.scale;
-
-			let box = node.boundingBox;
-			let min = node.octreeGeometry.offset.clone().add(box.min);
-			let size = box.max.clone().sub(box.min);
-			let max = min.clone().add(size);
-			let numPoints = node.numPoints;
-
-			// console.log(box, min, max)
-
-			let offset = node.octreeGeometry.loader.offset;
-
-			let message = {
-				name: node.name,
-				buffer: buffer,
-				pointAttributes: pointAttributes,
-				scale: scale,
-				min: min,
-				max: max,
-				size: size,
-				offset: offset,
-				numPoints: numPoints
-			};
-
-			worker.postMessage(message, [message.buffer]);
+	
+					node.density = data.density;
+					node.geometry = geometry;
+					node.loaded = true;
+					node.loading = false;
+					potree.numNodesLoading--;
+	
+					resolve(); // Notify that the worker has completed
+				};
+	
+				worker.onerror = (err) => {
+					node.loaded = false;
+					node.loading = false;
+					potree.numNodesLoading--;
+					reject(err); // Notify that the worker encountered an error
+				};
+	
+				let pointAttributes = node.octreeGeometry.pointAttributes;
+				let scale = node.octreeGeometry.scale;
+				let box = node.boundingBox;
+				let min = node.octreeGeometry.offset.clone().add(box.min);
+				let size = box.max.clone().sub(box.min);
+				let max = min.clone().add(size);
+				let numPoints = node.numPoints;
+				let offset = node.octreeGeometry.loader.offset;
+	
+				let message = {
+					name: node.name,
+					buffer: buffer,
+					pointAttributes: pointAttributes,
+					scale: scale,
+					min: min,
+					max: max,
+					size: size,
+					offset: offset,
+					numPoints: numPoints
+				};
+	
+				worker.postMessage(message, [message.buffer]);
+			});
 		} catch (e) {
 			node.loaded = false;
 			node.loading = false;
@@ -146,7 +144,7 @@ export class NodeLoader {
 		}
 	}
 
-	 parseHierarchy(node, buffer) {
+	parseHierarchy(node, buffer) {
 
 		let view = new DataView(buffer);
 		let tStart = performance.now();
@@ -395,7 +393,8 @@ export class OctreeLoader {
 		root.byteOffset = 0;
 
 		octree.root = root;
-		loader.load(root, octreeFileUrl);
+		await loader.load(root, octreeFileUrl);
+		console.log("11111111111111")
 
 		let result = {
 			geometry: octree,

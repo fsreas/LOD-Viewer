@@ -2011,6 +2011,7 @@ async function loadOctreeGeometry(rootNode) {
 let octreeFileUrl;
 async function loadScene() {
 	const content = await loadPointCloud(dataSource.metaData, 'geometry', octreeFileUrl)
+	console.log("load scene")
 	octreeGeometry = content.geometry
 	octreeGeometryLoader = octreeGeometry.loader
 	await new Promise((resolve) => setTimeout(resolve, dataSource.initLoadTime));
@@ -2602,77 +2603,6 @@ async function readGaussianFromNode(node, gaussianSplats, campos, level) {
 	}
 }
 
-// read gaussian data from octree node List saved
-async function readGaussianFromNodeList(nodeList, gaussianSplats, campos) {
-	gaussianSplats.loadedCount = 0;
-	for (let idx = 0; idx < nodeList.length; idx++) {
-		if (nodeList[idx].visibility && nodeList[idx].loaded && !nodeList[idx].reading) {
-			//set reading flag
-			nodeList[idx].reading = true;
-			const currentCount = nodeList[idx].numPoints
-			for (let i = 0; i < currentCount; i++) {
-				// check buffer size
-				if (!isBufferLargeEnough(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3, 4)) return;
-				// read into buffer
-				const positions = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength, 3);
-				const scales = new Float32Array(gaussianSplats.extraBuffer, gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3, 3);
-				const rgbas = new Uint8ClampedArray(
-					gaussianSplats.extraBuffer,
-					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3,
-					4,
-				);
-				const rots = new Uint8ClampedArray(
-					gaussianSplats.extraBuffer,
-					gaussianSplats.loadedCount * gaussianSplats.rowLength + 4 * 3 + 4 * 3 + 4,
-					4,
-				);
-
-				let { position, harmonic, opacity, scale, rotation } = nodeView(i, nodeList[idx])
-				// Normalize quaternion
-				let length2 = 0
-
-				for (let j = 0; j < 4; j++)
-					length2 += rotation[j] * rotation[j]
-
-				const length = Math.sqrt(length2)
-
-				rotation = rotation.map(v => (v / length) * 128 + 128)
-
-				rots[0] = rotation[0];
-				rots[1] = rotation[1];
-				rots[2] = rotation[2];
-				rots[3] = rotation[3];
-
-				// Exponentiate scale
-				scale = scale.map(v => Math.exp(v))
-
-				scales[0] = scale[0];
-				scales[1] = scale[1];
-				scales[2] = scale[2];
-
-				// const SH_C0 = 0.28209479177387814
-				// rgbas[0] = (0.5 + SH_C0 * harmonic[0]) * 255;
-				// rgbas[1] = (0.5 + SH_C0 * harmonic[1]) * 255;
-				// rgbas[2] = (0.5 + SH_C0 * harmonic[2]) * 255;
-
-				let color = computeColorFromSH(settings.shDegree, position, campos, harmonic)
-				rgbas[0] = color.x * 255;
-				rgbas[1] = color.y * 255;
-				rgbas[2] = color.z * 255;
-
-				// Activate alpha
-				const sigmoid = (m1) => 1 / (1 + Math.exp(-m1))
-				rgbas[3] = sigmoid(opacity) * 255;
-
-				positions[0] = position[0];
-				positions[1] = position[1];
-				positions[2] = position[2];
-
-				gaussianSplats.loadedCount++;
-			}
-		}
-	}
-}
 async function readGaussianFromNodeListMultiThread(nodeList, gaussianSplats, campos) {
     gaussianSplats.loadedCount = 0;
 
